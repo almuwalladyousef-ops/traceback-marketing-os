@@ -7,12 +7,9 @@ import { createAuthToken, COOKIE_NAME } from "@/lib/auth";
 const PASSWORD = process.env.APP_PASSWORD;
 if (!PASSWORD) throw new Error("APP_PASSWORD env var is required");
 
-// In-memory rate limiter: max 5 attempts per IP per 15-minute window.
-// NOTE: this resets on server restart / cold start. Upgrade to Upstash
-// Redis for persistent rate limiting across serverless invocations.
 const attempts = new Map<string, { count: number; resetAt: number }>();
 const WINDOW_MS = 15 * 60 * 1000;
-const MAX_ATTEMPTS = 5;
+const MAX_ATTEMPTS = 15;
 
 function isRateLimited(ip: string): boolean {
   const now = Date.now();
