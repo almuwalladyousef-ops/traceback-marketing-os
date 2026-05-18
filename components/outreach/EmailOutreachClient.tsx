@@ -1,0 +1,1075 @@
+"use client";
+
+import { useState, useTransition, useRef, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Modal } from "@/components/ui/Modal";
+import { Input, Textarea } from "@/components/ui/Input";
+import { Button } from "@/components/ui/Button";
+import {
+  updateCompanyField,
+  archiveCompany,
+  unarchiveCompany,
+  softDeleteCompany,
+  restoreCompany,
+  deleteCompany,
+  bulkSoftDeleteCompanies,
+  bulkDeleteCompanies,
+  bulkArchiveCompanies,
+  createCompany,
+  importCompanies,
+} from "@/server/actions/companies";
+import { createContact, deleteContact, updateContactField } from "@/server/actions/contacts";
+import type { Company, Contact } from "@/lib/supabase/types";
+import { Plus, Upload, X, ExternalLink, ArchiveRestore, Trash2, RotateCcw, Archive } from "lucide-react";
+import { MobileActionsPortal, MobileMoreMenu } from "@/components/shell/MobileActionsPortal";
+
+type CompanyWithDue = Company & { due: boolean };
+type Filter = "not_started" | "sent" | "bump1" | "bump2" | "replied" | "archived" | "deleted";
+type Sort = "oldest" | "newest" | "az";
+
+interface Props {
+  companies: CompanyWithDue[];
+  contactsByCompany: Record<string, Contact[]>;
+}
+
+const FILTERS = [
+  { id: "not_started" as Filter, label: "Not contacted", icon: "○" },
+  { id: "sent" as Filter, label: "Sent", icon: "↗" },
+  { id: "bump1" as Filter, label: "Bump 1", icon: "↻" },
+  { id: "bump2" as Filter, label: "Bump 2", icon: "↻↻" },
+  { id: "replied" as Filter, label: "Replied", icon: "✓" },
+  { id: "archived" as Filter, label: "Archived", icon: "▤" },
+  { id: "deleted" as Filter, label: "Deleted", icon: "✕" },
+];
+
+const COLS = "36px 44px 200px 130px 80px 80px 80px 130px 170px 1fr 70px";
+const MIN_WIDTH = "1150px";
+
+const TODAY = new Date().toISOString().split("T")[0];
+
+function daysAgo(d: string | null) {
+  if (!d) return null;
+  return Math.floor((new Date(TODAY).getTime() - new Date(d).getTime()) / 86400000);
+}
+
+function fmtDate(d: string | null) {
+  if (!d) return "";
+  const [, m, day] = d.split("-");
+  return `${parseInt(m)}/${parseInt(day)}`;
+}
+
+/* ─── Mini spark bars ─────────────────────────────────────────────────── */
+function MiniBars({ data, color, height = 20 }: { data: number[]; color: string; height?: number }) {
+  const max = Math.max(...data, 1);
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height }}>
+      {data.map((v, i) => (
+        <div key={i} style={{
+          flex: 1,
+          height: `${(v / max) * 100}%`,
+          background: i === data.length - 1 ? color : `color-mix(in oklch, ${color} 35%, transparent)`,
+          borderRadius: 2, minHeight: 2,
+        }}/>
+      ))}
+    </div>
+  );
+}
+
+/* ─── Stats strip ─────────────────────────────────────────────────────── */
+function StatsStrip({ companies }: { companies: CompanyWithDue[] }) {
+  const active = companies.filter((c) => !c.archived && !c.soft_deleted);
+  const replied = companies.filter((c) => ["Replied", "In Conversation"].includes(c.status)).length;
+  const sent = active.filter((c) => !!c.outreach_date).length;
+  const replyRate = sent > 0 ? Math.round((replied / sent) * 100) : 0;
+  const dueToday = active.filter((c) => {
+    if (!c.outreach_date || c.status === "Replied" || c.status === "Dead") return false;
+    const d1 = daysAgo(c.outreach_date) ?? 0;
+    if (!c.follow_up_date) return d1 >= 3;
+    const d2 = daysAgo(c.follow_up_date) ?? 0;
+    if (!c.follow_up_2_date) return d2 >= 4;
+    return false;
+  }).length;
+
+  const stats = [
+    { label: "Due today", value: dueToday, color: "var(--accent)", note: "outreach + bumps" },
+    { label: "Active pipeline", value: active.length, color: "var(--text)", note: `${sent} contacted` },
+    { label: "Replies", value: replied, color: "var(--green)", note: `${replyRate}% reply rate` },
+    { label: "This week sent", value: 23, color: "var(--text)", note: "+8 vs last week", spark: [3, 5, 4, 7, 6, 9, 8] },
+  ];
+
+  return (
+    <div className="stats-grid" style={{
+      display: "grid", gridTemplateColumns: "repeat(4, 1fr)",
+      gap: 1, background: "var(--border)", border: "1px solid var(--border)",
+      borderRadius: 12, overflow: "hidden", marginBottom: 18,
+    }}>
+      {stats.map((s, i) => (
+        <div key={i} style={{ background: "var(--surface)", padding: "14px 18px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 }}>{s.label}</span>
+            {s.spark && <div style={{ width: 56 }}><MiniBars data={s.spark} color={s.color} height={20}/></div>}
+          </div>
+          <div className="stat-num" style={{ fontSize: 26, color: s.color, marginTop: 6, letterSpacing: "-0.02em" }}>{s.value}</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>{s.note}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ─── Filter row ──────────────────────────────────────────────────────── */
+function FilterRow({
+  filter,
+  setFilter,
+  counts,
+  sort,
+  onSortCycle,
+  className,
+}: {
+  filter: Filter;
+  setFilter: (f: Filter) => void;
+  counts: Record<string, number>;
+  sort: Sort;
+  onSortCycle: () => void;
+  className?: string;
+}) {
+  return (
+    <div className={className} style={{ display: "flex", alignItems: "center", gap: 4, padding: 3, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, marginBottom: 14 }}>
+      {FILTERS.map((f) => {
+        const isActive = filter === f.id;
+        return (
+          <button
+            key={f.id}
+            onClick={() => setFilter(f.id)}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 7,
+              padding: "6px 12px", borderRadius: 7,
+              background: isActive ? "var(--surface-2)" : "transparent",
+              color: isActive ? "var(--text)" : "var(--text-muted)",
+              border: "none", fontSize: 12.5,
+              fontWeight: isActive ? 500 : 400,
+              boxShadow: isActive ? "inset 0 0 0 1px var(--border), 0 1px 2px rgba(0,0,0,0.3)" : "none",
+              cursor: "pointer", transition: "all 0.15s",
+            }}
+          >
+            <span style={{ color: isActive ? "var(--accent)" : "var(--text-dim)", fontSize: 11, fontFamily: "JetBrains Mono, monospace" }}>{f.icon}</span>
+            <span>{f.label}</span>
+            <span className="mono" style={{
+              fontSize: 10.5, padding: "1px 6px", borderRadius: 5,
+              background: isActive ? "var(--accent-dim)" : "var(--surface-3)",
+              color: isActive ? "var(--accent)" : "var(--text-muted)",
+              fontWeight: 600,
+            }}>{counts[f.id] ?? 0}</span>
+          </button>
+        );
+      })}
+      <div style={{ flex: 1 }}/>
+      <button
+        onClick={onSortCycle}
+        className="filter-sort-btn"
+        style={{
+          padding: "6px 10px", fontSize: 12, color: "var(--text-muted)",
+          background: "transparent", border: "1px solid var(--border)", borderRadius: 7,
+          display: "inline-flex", alignItems: "center", gap: 6,
+          cursor: "pointer", transition: "border-color 0.15s, color 0.15s",
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; e.currentTarget.style.borderColor = "var(--border-strong)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.borderColor = "var(--border)"; }}
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          {sort === "az" ? <><path d="M3 6h18M6 12h12M10 18h4"/></> : sort === "newest" ? <><path d="M3 18l4-12 4 12"/><path d="M5.5 13h5M17 6v12M14 9l3-3 3 3"/></> : <><path d="M3 6l4 12 4-12"/><path d="M5.5 11h5M17 18V6M14 15l3 3 3-3"/></>}
+        </svg>
+        Sort: {sort === "oldest" ? "Oldest first" : sort === "newest" ? "Newest first" : "A → Z"}
+      </button>
+    </div>
+  );
+}
+
+/* ─── Inline edit ─────────────────────────────────────────────────────── */
+function InlineEdit({
+  value,
+  onSave,
+  placeholder,
+  multiline,
+  textStyle,
+  disabled,
+}: {
+  value: string;
+  onSave: (v: string) => void;
+  placeholder?: string;
+  multiline?: boolean;
+  textStyle?: React.CSSProperties;
+  disabled?: boolean;
+}) {
+  const [local, setLocal] = useState(value);
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => { if (!focused) setLocal(value); }, [value, focused]);
+
+  const baseStyle: React.CSSProperties = {
+    width: "100%",
+    background: focused ? "var(--surface-2)" : "transparent",
+    border: "1px solid " + (focused ? "var(--accent-line)" : "transparent"),
+    borderRadius: 5, padding: "3px 6px",
+    color: local ? "var(--text)" : "var(--text-dim)",
+    fontSize: 12.5, fontFamily: "inherit", outline: "none", resize: "none",
+    transition: "background 0.12s, border-color 0.12s",
+    ...textStyle,
+  };
+  const handlers = {
+    value: local,
+    placeholder,
+    disabled,
+    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setLocal(e.target.value),
+    onFocus: () => setFocused(true),
+    onBlur: () => { setFocused(false); if (local !== value) onSave(local); },
+    onMouseEnter: (e: React.MouseEvent<HTMLInputElement | HTMLTextAreaElement>) => { if (!focused && !disabled) (e.target as HTMLElement).style.background = "var(--surface-2)"; },
+    onMouseLeave: (e: React.MouseEvent<HTMLInputElement | HTMLTextAreaElement>) => { if (!focused) (e.target as HTMLElement).style.background = "transparent"; },
+    style: baseStyle,
+  };
+  return multiline ? <textarea rows={2} {...handlers as React.TextareaHTMLAttributes<HTMLTextAreaElement>}/> : <input {...handlers as React.InputHTMLAttributes<HTMLInputElement>}/>;
+}
+
+/* ─── Touch cell ──────────────────────────────────────────────────────── */
+function TouchCell({
+  date,
+  disabled,
+  onToggle,
+  onDateChange,
+}: {
+  date: string | null;
+  disabled?: boolean;
+  onToggle: (checked: boolean) => void;
+  onDateChange: (date: string) => void;
+}) {
+  const filled = !!date;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+      <button
+        onClick={() => !disabled && onToggle(!filled)}
+        disabled={disabled}
+        style={{
+          width: 22, height: 22, borderRadius: 6,
+          background: filled ? "var(--accent)" : "transparent",
+          border: "1px solid " + (filled ? "var(--accent)" : (disabled ? "var(--border)" : "var(--border-strong)")),
+          display: "flex", alignItems: "center", justifyContent: "center",
+          color: "#1a1208", cursor: disabled ? "not-allowed" : "pointer",
+          opacity: disabled ? 0.35 : 1, transition: "all 0.15s",
+          boxShadow: filled ? "0 0 0 3px var(--accent-dim)" : "none",
+        }}
+      >
+        {filled && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>}
+      </button>
+      {filled && date && (
+        <div style={{ position: "relative", display: "inline-block", marginTop: 2 }}>
+          <div className="mono" style={{ fontSize: 10.5, color: "var(--text-muted)", padding: "1px 3px", userSelect: "none" }}>{fmtDate(date)}</div>
+          <input type="date" value={date} onChange={(e) => onDateChange(e.target.value)}
+            style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", width: "100%", height: "100%", zIndex: 2 }}/>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Status control (replied toggle) ─────────────────────────────────── */
+function StatusControl({ status, onChange, disabled }: { status: string; onChange: (s: string) => void; disabled?: boolean }) {
+  const isReplied = ["Replied", "In Conversation"].includes(status);
+  return (
+    <button
+      onClick={() => !disabled && onChange(isReplied ? "Not Started" : "Replied")}
+      disabled={disabled}
+      style={{
+        padding: "5px 12px", fontSize: 11.5, fontWeight: 500,
+        background: isReplied ? "var(--green-dim)" : "transparent",
+        color: isReplied ? "var(--green)" : "var(--text-muted)",
+        border: "1px solid " + (isReplied ? "color-mix(in oklch, var(--green) 35%, transparent)" : "var(--border)"),
+        borderRadius: 7, display: "inline-flex", alignItems: "center", gap: 6,
+        cursor: disabled ? "not-allowed" : "pointer", transition: "all 0.15s",
+        opacity: disabled ? 0.4 : 1,
+      }}
+      onMouseEnter={(e) => {
+        if (disabled) return;
+        if (isReplied) {
+          e.currentTarget.style.background = "var(--red-dim)";
+          e.currentTarget.style.color = "var(--red)";
+          e.currentTarget.style.borderColor = "color-mix(in oklch, var(--red) 35%, transparent)";
+        } else {
+          e.currentTarget.style.color = "var(--green)";
+          e.currentTarget.style.borderColor = "color-mix(in oklch, var(--green) 35%, transparent)";
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (isReplied) {
+          e.currentTarget.style.background = "var(--green-dim)";
+          e.currentTarget.style.color = "var(--green)";
+          e.currentTarget.style.borderColor = "color-mix(in oklch, var(--green) 35%, transparent)";
+        } else {
+          e.currentTarget.style.color = "var(--text-muted)";
+          e.currentTarget.style.borderColor = "var(--border)";
+          e.currentTarget.style.background = "transparent";
+        }
+      }}
+    >
+      {isReplied
+        ? <span style={{ width: 5, height: 5, borderRadius: "50%", background: "currentColor" }}/>
+        : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.45 }}><path d="M20 6 9 17l-5-5"/></svg>
+      }
+      {isReplied ? "Replied" : "Mark replied"}
+    </button>
+  );
+}
+
+/* ─── Contact chips (avatar stack) ────────────────────────────────────── */
+function ContactChips({ contacts, onOpen, onAdd }: { contacts: Contact[]; onOpen: () => void; onAdd: () => void }) {
+  const show = contacts.slice(0, 3);
+  const extra = contacts.length - show.length;
+  return (
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      {contacts.length > 0 && (
+        <>
+          <div style={{ display: "flex" }}>
+            {show.map((c, i) => (
+              <div key={c.id} title={c.name} style={{
+                width: 24, height: 24, borderRadius: "50%",
+                background: "var(--surface-3)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 9.5, fontWeight: 600, color: "var(--text-muted)",
+                marginLeft: i === 0 ? 0 : -6,
+                border: "2px solid var(--surface)",
+              }}>
+                {c.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+              </div>
+            ))}
+            {extra > 0 && (
+              <div style={{
+                width: 24, height: 24, borderRadius: "50%",
+                background: "var(--surface-3)", marginLeft: -6,
+                border: "2px solid var(--surface)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 10, fontWeight: 600, color: "var(--text-muted)",
+              }}>+{extra}</div>
+            )}
+          </div>
+          <button onClick={onOpen} style={{
+            background: "transparent", border: "none", padding: "2px 4px",
+            color: "var(--text-muted)", fontSize: 11.5, fontWeight: 500, cursor: "pointer",
+          }}>
+            {contacts.length === 1 ? contacts[0].name : `${contacts.length} contacts`}
+          </button>
+        </>
+      )}
+      <button onClick={onAdd} title="Add contact" style={{
+        width: 22, height: 22, borderRadius: 6,
+        background: "transparent", border: "1px dashed var(--border-strong)",
+        color: "var(--text-dim)", display: "flex", alignItems: "center", justifyContent: "center",
+        cursor: "pointer", flexShrink: 0,
+      }}>
+        <Plus size={11}/>
+      </button>
+    </div>
+  );
+}
+
+/* ─── Contact slide-over ──────────────────────────────────────────────── */
+function CompanySlideOver({
+  company,
+  contacts,
+  onClose,
+  startAddContact,
+}: {
+  company: CompanyWithDue;
+  contacts: Contact[];
+  onClose: () => void;
+  startAddContact: boolean;
+}) {
+  const [showAdd, setShowAdd] = useState(startAddContact);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<Record<string, string>>({});
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  function startEdit(ct: Contact) {
+    setEditingId(ct.id);
+    setEditDraft({ name: ct.name, role: ct.role ?? "", email: ct.email ?? "", phone: ct.phone ?? "", x_handle: ct.x_handle ?? "", linkedin_url: ct.linkedin_url ?? "" });
+  }
+
+  function saveEdit(id: string) {
+    startTransition(async () => {
+      await Promise.all([
+        updateContactField(id, "name", editDraft.name || null),
+        updateContactField(id, "role", editDraft.role || null),
+        updateContactField(id, "email", editDraft.email || null),
+        updateContactField(id, "phone", editDraft.phone || null),
+        updateContactField(id, "x_handle", editDraft.x_handle || null),
+        updateContactField(id, "linkedin_url", editDraft.linkedin_url || null),
+      ]);
+      setEditingId(null);
+      router.refresh();
+    });
+  }
+
+  function handleAdd(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    fd.set("company_id", company.id);
+    startTransition(async () => {
+      await createContact(fd);
+      setShowAdd(false);
+      router.refresh();
+    });
+  }
+
+  function handleDelete(id: string) {
+    startTransition(async () => {
+      await deleteContact(id);
+      if (editingId === id) setEditingId(null);
+      router.refresh();
+    });
+  }
+
+  const fieldStyle: React.CSSProperties = {
+    width: "100%", padding: "6px 9px", borderRadius: 6,
+    background: "var(--surface)", border: "1px solid var(--border)",
+    color: "var(--text)", fontSize: 12.5, fontFamily: "inherit", outline: "none",
+  };
+
+  return (
+    <>
+      <div onClick={onClose} style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+        backdropFilter: "blur(2px)", zIndex: 50,
+      }}/>
+      <div style={{
+        position: "fixed", top: 0, right: 0, bottom: 0, width: "85vw", maxWidth: 520,
+        background: "var(--surface)", borderLeft: "1px solid var(--border)",
+        zIndex: 51, display: "flex", flexDirection: "column",
+        boxShadow: "-12px 0 32px rgba(0,0,0,0.4)",
+      }}>
+        <div style={{ padding: "20px 24px", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: 9,
+                background: "var(--surface-3)", border: "1px solid var(--border-strong)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 14, fontWeight: 600, color: "var(--text)",
+              }}>{company.name[0]}</div>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 600 }}>{company.name}</div>
+                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{company.industry ?? "—"} · {company.url ?? "—"}</div>
+              </div>
+            </div>
+            <button onClick={onClose} className="btn-icon">
+              <X size={14}/>
+            </button>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
+          {/* Timeline */}
+          <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 12 }}>Outreach timeline</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24, position: "relative" }}>
+            {[
+              { label: "Sent", date: company.outreach_date },
+              { label: "Bump 1", date: company.follow_up_date },
+              { label: "Bump 2", date: company.follow_up_2_date },
+            ].map((step, i, arr) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
+                <div style={{
+                  width: 28, height: 28, borderRadius: "50%",
+                  background: step.date ? "var(--accent)" : "var(--surface-3)",
+                  border: step.date ? "none" : "1px dashed var(--border-strong)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  color: "#1a1208", flexShrink: 0,
+                  boxShadow: step.date ? "0 0 0 4px var(--accent-dim)" : "none",
+                }}>
+                  {step.date
+                    ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                    : <span className="mono" style={{ fontSize: 10, color: "var(--text-dim)" }}>{i + 1}</span>
+                  }
+                </div>
+                {i < arr.length - 1 && (
+                  <span style={{ position: "absolute", left: 13.5, top: 28, height: 18, width: 1, background: "var(--border)" }}/>
+                )}
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{step.label}</div>
+                  <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>
+                    {step.date ? `${fmtDate(step.date)} · ${daysAgo(step.date)}d ago` : "Not sent"}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {company.reply_notes && (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 8 }}>Reply notes</div>
+              <div style={{ padding: 14, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 13, lineHeight: 1.55, color: "var(--text)" }}>
+                {company.reply_notes}
+              </div>
+            </div>
+          )}
+
+          {/* Contacts */}
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 }}>Contacts · {contacts.length}</div>
+              <button
+                onClick={() => { setShowAdd((v) => !v); setTimeout(() => nameRef.current?.focus(), 0); }}
+                style={{
+                  fontSize: 11.5, background: showAdd ? "var(--accent-dim)" : "transparent",
+                  color: showAdd ? "var(--accent)" : "var(--text-muted)",
+                  border: "1px solid " + (showAdd ? "var(--accent-line)" : "var(--border)"),
+                  borderRadius: 6, padding: "4px 9px",
+                  display: "inline-flex", alignItems: "center", gap: 5,
+                  cursor: "pointer", transition: "all 0.15s",
+                }}
+              >
+                <Plus size={11} style={{ transform: showAdd ? "rotate(45deg)" : "none", transition: "transform 0.15s" }}/>
+                {showAdd ? "Cancel" : "Add contact"}
+              </button>
+            </div>
+
+            {showAdd && (
+              <form onSubmit={handleAdd} style={{
+                marginBottom: 12, padding: 14,
+                background: "var(--surface-2)", border: "1px solid var(--accent-line)",
+                borderRadius: 9, display: "flex", flexDirection: "column", gap: 10,
+              }}>
+                <div style={{ fontSize: 11.5, color: "var(--text-muted)", fontWeight: 500 }}>New contact</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div><div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>Name *</div><input ref={nameRef} name="name" required placeholder="Full name" autoFocus style={fieldStyle} onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")} onBlur={(e) => (e.target.style.borderColor = "var(--border)")}/></div>
+                  <div><div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>Role</div><input name="role" placeholder="e.g. VP Marketing" style={fieldStyle} onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")} onBlur={(e) => (e.target.style.borderColor = "var(--border)")}/></div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div><div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>Email</div><input name="email" placeholder="name@company.com" style={fieldStyle} onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")} onBlur={(e) => (e.target.style.borderColor = "var(--border)")}/></div>
+                  <div><div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>Phone</div><input name="phone" placeholder="+1 555 000 0000" style={fieldStyle} onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")} onBlur={(e) => (e.target.style.borderColor = "var(--border)")}/></div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div><div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>X handle</div><input name="x_handle" placeholder="@handle" style={fieldStyle} onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")} onBlur={(e) => (e.target.style.borderColor = "var(--border)")}/></div>
+                  <div><div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>LinkedIn</div><input name="linkedin_url" placeholder="linkedin.com/in/..." style={fieldStyle} onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")} onBlur={(e) => (e.target.style.borderColor = "var(--border)")}/></div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="submit" disabled={isPending} style={{ padding: "6px 14px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, background: "var(--accent)", color: "#1a1208", border: "none", cursor: "pointer", opacity: isPending ? 0.5 : 1, boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)" }}>Add contact</button>
+                  <button type="button" onClick={() => setShowAdd(false)} style={{ padding: "6px 12px", borderRadius: 7, fontSize: 12.5, background: "transparent", color: "var(--text-muted)", border: "1px solid var(--border)", cursor: "pointer" }}>Cancel</button>
+                </div>
+              </form>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {contacts.map((ct) => {
+                const isEditing = editingId === ct.id;
+                return (
+                  <div key={ct.id} style={{
+                    background: "var(--surface-2)",
+                    border: "1px solid " + (isEditing ? "var(--accent-line)" : "var(--border)"),
+                    borderRadius: 8, overflow: "hidden",
+                  }}>
+                    <div style={{ padding: "10px 12px", display: "flex", alignItems: "center", gap: 11 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: "50%", background: "var(--surface-3)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600, color: "var(--text-muted)" }}>
+                        {ct.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500 }}>{ct.name}</div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{[ct.role, ct.email].filter(Boolean).join(" · ") || "—"}</div>
+                        {(ct.x_handle || ct.linkedin_url) && (
+                          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                            {ct.x_handle && (
+                              <a
+                                href={`https://x.com/${ct.x_handle.replace(/^@/, "")}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)", textDecoration: "none" }}
+                                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
+                                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-muted)")}
+                              >
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.261 5.636 5.903-5.636Zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                                {ct.x_handle.startsWith("@") ? ct.x_handle : `@${ct.x_handle}`}
+                              </a>
+                            )}
+                            {ct.linkedin_url && (
+                              <a
+                                href={ct.linkedin_url.startsWith("http") ? ct.linkedin_url : `https://${ct.linkedin_url}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)", textDecoration: "none" }}
+                                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
+                                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-muted)")}
+                              >
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                                LinkedIn
+                              </a>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <button onClick={() => isEditing ? saveEdit(ct.id) : startEdit(ct)} className="btn-icon" style={{ width: 26, height: 26, color: isEditing ? "var(--accent)" : "var(--text-muted)" }} title={isEditing ? "Save" : "Edit"}>
+                        {isEditing
+                          ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                          : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        }
+                      </button>
+                      <button onClick={() => handleDelete(ct.id)} className="btn-icon" style={{ width: 26, height: 26 }}>
+                        <X size={11} style={{ opacity: 0.6 }}/>
+                      </button>
+                    </div>
+                    {isEditing && (
+                      <div style={{ padding: "12px 12px 14px", borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                          <div><div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>Name *</div><input value={editDraft.name ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))} placeholder="Full name" style={fieldStyle} onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")} onBlur={(e) => (e.target.style.borderColor = "var(--border)")}/></div>
+                          <div><div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>Role</div><input value={editDraft.role ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, role: e.target.value }))} placeholder="e.g. VP Marketing" style={fieldStyle} onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")} onBlur={(e) => (e.target.style.borderColor = "var(--border)")}/></div>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                          <div><div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>Email</div><input value={editDraft.email ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, email: e.target.value }))} placeholder="name@company.com" style={fieldStyle} onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")} onBlur={(e) => (e.target.style.borderColor = "var(--border)")}/></div>
+                          <div><div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>Phone</div><input value={editDraft.phone ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="+1 555 000 0000" style={fieldStyle} onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")} onBlur={(e) => (e.target.style.borderColor = "var(--border)")}/></div>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                          <div><div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>X handle</div><input value={editDraft.x_handle ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, x_handle: e.target.value }))} placeholder="@handle" style={fieldStyle} onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")} onBlur={(e) => (e.target.style.borderColor = "var(--border)")}/></div>
+                          <div><div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>LinkedIn</div><input value={editDraft.linkedin_url ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, linkedin_url: e.target.value }))} placeholder="linkedin.com/in/..." style={fieldStyle} onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")} onBlur={(e) => (e.target.style.borderColor = "var(--border)")}/></div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+                          <button type="button" onClick={() => saveEdit(ct.id)} disabled={isPending} style={{ padding: "6px 14px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, background: "var(--accent)", color: "#1a1208", border: "none", cursor: "pointer", opacity: isPending ? 0.5 : 1, boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)" }}>Save</button>
+                          <button type="button" onClick={() => setEditingId(null)} style={{ padding: "6px 12px", borderRadius: 7, fontSize: 12.5, background: "transparent", color: "var(--text-muted)", border: "1px solid var(--border)", cursor: "pointer" }}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {contacts.length === 0 && !showAdd && (
+                <div style={{ padding: 24, textAlign: "center", color: "var(--text-dim)", fontSize: 13, border: "1px dashed var(--border)", borderRadius: 8 }}>
+                  No contacts yet — click Add contact above
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ─── Company row ─────────────────────────────────────────────────────── */
+function CompanyRow({
+  company,
+  contacts,
+  num,
+  selected,
+  onSelect,
+  onOpenDetail,
+}: {
+  company: CompanyWithDue;
+  contacts: Contact[];
+  num: number;
+  selected: boolean;
+  onSelect: (id: string, checked: boolean) => void;
+  onOpenDetail: (c: CompanyWithDue, addContact: boolean) => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+  const isArchived = company.archived;
+  const isSoftDeleted = company.soft_deleted;
+  const dimmed = isArchived || isSoftDeleted;
+
+  const [vals, setVals] = useState({
+    name: company.name,
+    url: company.url ?? "",
+    industry: company.industry ?? "",
+    outreach_date: company.outreach_date ?? "",
+    follow_up_date: company.follow_up_date ?? "",
+    follow_up_2_date: company.follow_up_2_date ?? "",
+    status: company.status,
+    reply_notes: company.reply_notes ?? "",
+  });
+
+  function save(field: string, value: string | null) {
+    startTransition(async () => {
+      await updateCompanyField(company.id, field as keyof typeof vals, value);
+      router.refresh();
+    });
+  }
+
+  function toggleDate(field: string) {
+    return (checked: boolean) => {
+      const newVal = checked ? TODAY : "";
+      setVals((p) => ({ ...p, [field]: newVal }));
+      save(field, newVal || null);
+    };
+  }
+
+  function changeDate(field: string) {
+    return (d: string) => {
+      setVals((p) => ({ ...p, [field]: d }));
+      save(field, d || null);
+    };
+  }
+
+  function handleStatusChange(newStatus: string) {
+    setVals((p) => ({ ...p, status: newStatus as typeof vals.status }));
+    save("status", newStatus);
+  }
+
+  function run(action: () => Promise<unknown>) {
+    startTransition(async () => { await action(); router.refresh(); });
+  }
+
+  return (
+    <div
+      className="row-hover"
+      style={{
+        display: "grid",
+        gridTemplateColumns: COLS,
+        alignItems: "center",
+        gap: 0,
+        padding: "12px 14px",
+        borderTop: "1px solid var(--border)",
+        background: selected ? "color-mix(in oklch, var(--accent) 8%, transparent)" : "transparent",
+        opacity: dimmed ? 0.55 : 1,
+        minHeight: 64,
+      }}
+    >
+      {/* checkbox */}
+      <div style={{ display: "flex", justifyContent: "center" }}>
+        <button onClick={() => onSelect(company.id, !selected)} style={{
+          width: 16, height: 16, borderRadius: 4,
+          border: "1px solid " + (selected ? "var(--accent)" : "var(--border-strong)"),
+          background: selected ? "var(--accent)" : "transparent",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          color: "#1a1208", cursor: "pointer",
+        }}>
+          {selected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>}
+        </button>
+      </div>
+
+      {/* row # */}
+      <div className="mono" style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "center" }}>{String(num).padStart(2, "0")}</div>
+
+      {/* company + industry stacked */}
+      <div style={{ paddingRight: 16, paddingLeft: 4 }}>
+        <InlineEdit value={vals.name} onSave={(v) => { setVals((p) => ({ ...p, name: v })); save("name", v); }} placeholder="Company name" disabled={dimmed} textStyle={{ fontWeight: 500, fontSize: 13.5, color: "var(--text)" }}/>
+        <InlineEdit value={vals.industry} onSave={(v) => { setVals((p) => ({ ...p, industry: v })); save("industry", v); }} placeholder="Industry" disabled={dimmed} textStyle={{ fontSize: 11, color: "var(--text-muted)" }}/>
+      </div>
+
+      {/* domain */}
+      <div style={{ paddingRight: 12, display: "flex", alignItems: "center", gap: 4 }}>
+        <InlineEdit value={vals.url} onSave={(v) => { setVals((p) => ({ ...p, url: v })); save("url", v); }} placeholder="domain.com" disabled={dimmed} textStyle={{ fontSize: 12, color: "var(--text-muted)" }} />
+        {vals.url && (
+          <a href={vals.url.startsWith("http") ? vals.url : `https://${vals.url}`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--text-dim)", display: "flex", flexShrink: 0 }}>
+            <ExternalLink size={11}/>
+          </a>
+        )}
+      </div>
+
+      {/* Sent */}
+      <TouchCell date={vals.outreach_date || null} disabled={dimmed} onToggle={toggleDate("outreach_date")} onDateChange={changeDate("outreach_date")}/>
+      {/* Bump 1 */}
+      <TouchCell date={vals.follow_up_date || null} disabled={dimmed || !vals.outreach_date} onToggle={toggleDate("follow_up_date")} onDateChange={changeDate("follow_up_date")}/>
+      {/* Bump 2 */}
+      <TouchCell date={vals.follow_up_2_date || null} disabled={dimmed || !vals.follow_up_date} onToggle={toggleDate("follow_up_2_date")} onDateChange={changeDate("follow_up_2_date")}/>
+
+      {/* status */}
+      <div style={{ display: "flex", justifyContent: "center" }}>
+        <StatusControl status={vals.status} onChange={handleStatusChange} disabled={dimmed}/>
+      </div>
+
+      {/* contacts */}
+      <div>
+        <ContactChips
+          contacts={contacts}
+          onOpen={() => onOpenDetail(company, false)}
+          onAdd={() => onOpenDetail(company, true)}
+        />
+      </div>
+
+      {/* reply notes */}
+      <div style={{ paddingRight: 12 }}>
+        <InlineEdit value={vals.reply_notes} onSave={(v) => { setVals((p) => ({ ...p, reply_notes: v })); save("reply_notes", v); }} placeholder="Notes…" multiline disabled={dimmed} textStyle={{ fontSize: 12.5, lineHeight: 1.4 }}/>
+      </div>
+
+      {/* actions */}
+      <div style={{ display: "flex", justifyContent: "center", gap: 2 }}>
+        {isSoftDeleted ? (
+          <>
+            <button onClick={() => run(() => restoreCompany(company.id))} disabled={isPending} className="btn-icon" title="Restore" style={{ width: 26, height: 26 }}><RotateCcw size={13}/></button>
+            <button onClick={() => { if (window.confirm(`Permanently delete "${vals.name}"?`)) run(() => deleteCompany(company.id)); }} disabled={isPending} className="btn-icon" title="Delete permanently" style={{ width: 26, height: 26, color: "var(--red)" }}><Trash2 size={13}/></button>
+          </>
+        ) : (
+          <>
+            <button onClick={() => run(() => isArchived ? unarchiveCompany(company.id) : archiveCompany(company.id))} disabled={isPending} className="btn-icon" title={isArchived ? "Unarchive" : "Archive"} style={{ width: 26, height: 26 }}>
+              {isArchived ? <ArchiveRestore size={13}/> : <Archive size={13}/>}
+            </button>
+            <button onClick={() => run(() => softDeleteCompany(company.id))} disabled={isPending} className="btn-icon" title="Delete" style={{ width: 26, height: 26 }}><Trash2 size={13}/></button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── CSV parser ──────────────────────────────────────────────────────── */
+function sanitizeCsvCell(v: string): string {
+  // Prefix formula-starting characters to prevent CSV injection in Excel/Sheets
+  return /^[=+\-@|]/.test(v) ? `\t${v}` : v;
+}
+
+function parseCSV(text: string) {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, "").toLowerCase().replace(/\s+/g, "_"));
+  return lines.slice(1).map((line) => {
+    const vs = line.split(",").map((v) => sanitizeCsvCell(v.trim().replace(/^"|"$/g, "")));
+    const row: Record<string, string> = {};
+    headers.forEach((h, i) => { if (vs[i]) row[h] = vs[i]; });
+    return row as { name: string };
+  }).filter((r) => r.name);
+}
+
+/* ─── Main ────────────────────────────────────────────────────────────── */
+export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
+  const [filter, setFilter] = useState<Filter>("not_started");
+  const [sort, setSort] = useState<Sort>("oldest");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showNew, setShowNew] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [detail, setDetail] = useState<{ company: CompanyWithDue; addContact: boolean } | null>(null);
+  const [isPendingCreate, startCreate] = useTransition();
+  const [isPendingImport, startImport] = useTransition();
+  const [isPendingBulk, startBulk] = useTransition();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
+
+  const SORT_CYCLE: Record<Sort, Sort> = { oldest: "newest", newest: "az", az: "oldest" };
+
+  const active = (c: CompanyWithDue) => !c.archived && !c.soft_deleted && !["Replied", "In Conversation", "Dead"].includes(c.status);
+
+  const counts: Record<string, number> = {
+    not_started: companies.filter((c) => active(c) && !c.outreach_date).length,
+    sent: companies.filter((c) => active(c) && !!c.outreach_date && !c.follow_up_date).length,
+    bump1: companies.filter((c) => active(c) && !!c.follow_up_date && !c.follow_up_2_date).length,
+    bump2: companies.filter((c) => active(c) && !!c.follow_up_2_date).length,
+    replied: companies.filter((c) => !c.archived && !c.soft_deleted && ["Replied", "In Conversation"].includes(c.status)).length,
+    archived: companies.filter((c) => c.archived && !c.soft_deleted).length,
+    deleted: companies.filter((c) => c.soft_deleted).length,
+  };
+
+  const filtered = companies
+    .filter((c) => {
+      if (filter === "deleted") return c.soft_deleted;
+      if (c.soft_deleted) return false;
+      if (filter === "archived") return c.archived;
+      if (c.archived) return false;
+      if (filter === "not_started") return active(c) && !c.outreach_date;
+      if (filter === "sent") return active(c) && !!c.outreach_date && !c.follow_up_date;
+      if (filter === "bump1") return active(c) && !!c.follow_up_date && !c.follow_up_2_date;
+      if (filter === "bump2") return active(c) && !!c.follow_up_2_date;
+      if (filter === "replied") return ["Replied", "In Conversation"].includes(c.status);
+      return true;
+    })
+    .sort((a, b) => {
+      if (sort === "az") return a.name.localeCompare(b.name);
+      const da = a.outreach_date ? new Date(a.outreach_date).getTime() : 0;
+      const db = b.outreach_date ? new Date(b.outreach_date).getTime() : 0;
+      if (!da && !db) return 0;
+      if (!da) return 1;
+      if (!db) return -1;
+      return sort === "newest" ? da - db : db - da;
+    });
+
+  const allSelected = filtered.length > 0 && filtered.every((c) => selectedIds.has(c.id));
+
+  function handleSelect(id: string, checked: boolean) {
+    setSelectedIds((prev) => { const n = new Set(prev); checked ? n.add(id) : n.delete(id); return n; });
+  }
+
+  function bulkAction(action: "softDelete" | "permanentDelete" | "archive") {
+    const ids = Array.from(selectedIds);
+    startBulk(async () => {
+      if (action === "softDelete") await bulkSoftDeleteCompanies(ids);
+      else if (action === "permanentDelete") await bulkDeleteCompanies(ids);
+      else await bulkArchiveCompanies(ids);
+      setSelectedIds(new Set());
+      router.refresh();
+    });
+  }
+
+  function handleExport() {
+    const compCols = ["name","url","industry","status","outreach_date","follow_up_date","reply_notes"];
+    const ctxCols = ["contact_name","contact_role","contact_email","contact_linkedin","contact_x","contact_phone"];
+    const headers = [...compCols, ...ctxCols];
+    const q = (v: unknown) => { const s = sanitizeCsvCell(String(v ?? "")); return `"${s.replace(/"/g, '""')}"`; };
+    const rows: string[] = [];
+    for (const c of companies) {
+      const contacts = contactsByCompany[c.id] ?? [];
+      const compVals = compCols.map((h) => q((c as unknown as Record<string, unknown>)[h]));
+      if (contacts.length === 0) {
+        rows.push([...compVals, ...ctxCols.map(() => '""')].join(","));
+      } else {
+        for (const ct of contacts) {
+          rows.push([...compVals, q(ct.name), q(ct.role), q(ct.email), q(ct.linkedin_url), q(ct.x_handle), q(ct.phone)].join(","));
+        }
+      }
+    }
+    const blob = new Blob([headers.join(",") + "\n" + rows.join("\n")], { type: "text/csv" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "email-outreach.csv"; a.click();
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const rows = parseCSV(ev.target?.result as string);
+      if (!rows.length) { alert("No valid rows found."); return; }
+      startImport(async () => { await importCompanies(rows); router.refresh(); });
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }
+
+  return (
+    <>
+      <MobileActionsPortal>
+        <button onClick={() => setShowNew(true)} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8, background: "var(--accent)", color: "#1a1208", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)" }}>
+          <Plus size={12}/> Add company
+        </button>
+        <MobileMoreMenu onImport={() => fileInputRef.current?.click()} onExport={handleExport}/>
+      </MobileActionsPortal>
+
+      <div className="fade-in">
+        <StatsStrip companies={companies}/>
+
+        <button className="mobile-filter-trigger" onClick={() => setFiltersOpen((v) => !v)}>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+            {FILTERS.find((f) => f.id === filter)?.label ?? "Filter"}
+            <span className="mono" style={{ fontSize: 10.5, padding: "1px 5px", borderRadius: 4, background: "var(--accent-dim)", color: "var(--accent)", fontWeight: 600 }}>{counts[filter] ?? 0}</span>
+          </span>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: filtersOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+
+        <FilterRow
+          className={`filter-row${filtersOpen ? " open" : ""}`}
+          filter={filter}
+          setFilter={(f) => { setFilter(f); setSelectedIds(new Set()); setFiltersOpen(false); }}
+          counts={counts}
+          sort={sort}
+          onSortCycle={() => setSort((s) => SORT_CYCLE[s])}
+        />
+
+        {/* Toolbar */}
+        <div className={`page-toolbar${selectedIds.size > 0 ? " has-selection" : ""}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          {selectedIds.size > 0 ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "var(--surface-2)", border: "1px solid var(--accent-line)", borderRadius: 9, fontSize: 12.5 }}>
+              <span style={{ color: "var(--text)" }}><span className="mono" style={{ color: "var(--accent)" }}>{selectedIds.size}</span> selected</span>
+              <span style={{ width: 1, height: 14, background: "var(--border)" }}/>
+              {filter === "deleted" ? (
+                <button onClick={() => { if (window.confirm(`Permanently delete ${selectedIds.size} companies?`)) bulkAction("permanentDelete"); }} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--red)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Delete permanently</button>
+              ) : (
+                <>
+                  <button onClick={() => bulkAction("archive")} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--text-muted)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Archive</button>
+                  <button onClick={() => bulkAction("softDelete")} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--red)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Delete</button>
+                </>
+              )}
+              <div style={{ flex: 1 }}/>
+              <button onClick={() => setSelectedIds(new Set())} className="btn-icon" style={{ width: 24, height: 24 }}><X size={11}/></button>
+            </div>
+          ) : <div/>}
+
+          <div className="page-actions" style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => fileInputRef.current?.click()} disabled={isPendingImport} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 8, fontSize: 12, background: "transparent", color: "var(--text-muted)", border: "1px solid var(--border)", cursor: "pointer" }}>
+              <Upload size={13}/>{isPendingImport ? "Importing…" : "Import CSV"}
+            </button>
+            <button onClick={handleExport} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 8, fontSize: 12, background: "transparent", color: "var(--text-muted)", border: "1px solid var(--border)", cursor: "pointer" }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Export CSV
+            </button>
+            <button onClick={() => setShowNew(true)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 8, background: "var(--accent)", color: "#1a1208", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)" }}>
+              <Plus size={12}/> Add company
+            </button>
+          </div>
+        </div>
+
+        {/* Table */}
+        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ minWidth: MIN_WIDTH }}>
+              {/* Header */}
+              <div style={{
+                display: "grid", gridTemplateColumns: COLS,
+                padding: "10px 14px", background: "var(--surface-2)",
+                borderBottom: "1px solid var(--border)",
+                fontSize: 10.5, color: "var(--text-muted)",
+                textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600,
+                alignItems: "center",
+              }}>
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                  <button onClick={() => setSelectedIds(allSelected ? new Set() : new Set(filtered.map((c) => c.id)))} style={{
+                    width: 16, height: 16, borderRadius: 4,
+                    border: "1px solid " + (allSelected ? "var(--accent)" : "var(--border-strong)"),
+                    background: allSelected ? "var(--accent)" : "transparent",
+                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#1a1208",
+                  }}>{allSelected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>}</button>
+                </div>
+                <div style={{ textAlign: "center" }}>#</div>
+                <div style={{ paddingLeft: 4 }}>Company</div>
+                <div>Domain</div>
+                <div style={{ textAlign: "center" }}>Sent</div>
+                <div style={{ textAlign: "center" }}>Bump 1</div>
+                <div style={{ textAlign: "center" }}>Bump 2</div>
+                <div style={{ textAlign: "center" }}>Status</div>
+                <div>Contacts</div>
+                <div>Reply notes</div>
+                <div style={{ textAlign: "center" }}>Actions</div>
+              </div>
+
+              {filtered.length === 0 ? (
+                <div style={{ padding: "64px 24px", textAlign: "center" }}>
+                  <div style={{ fontSize: 32, color: "var(--text-dim)", marginBottom: 8 }}>○</div>
+                  <div style={{ fontSize: 14, color: "var(--text)", marginBottom: 4 }}>No companies in this view</div>
+                  <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Try a different filter or add a company.</div>
+                </div>
+              ) : (
+                filtered.map((company, i) => (
+                  <CompanyRow
+                    key={company.id}
+                    company={company}
+                    contacts={contactsByCompany[company.id] ?? []}
+                    num={i + 1}
+                    selected={selectedIds.has(company.id)}
+                    onSelect={handleSelect}
+                    onOpenDetail={(c, add) => setDetail({ company: c, addContact: add })}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <input ref={fileInputRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleFileChange}/>
+
+      {detail && (
+        <CompanySlideOver
+          company={detail.company}
+          contacts={contactsByCompany[detail.company.id] ?? []}
+          onClose={() => setDetail(null)}
+          startAddContact={detail.addContact}
+        />
+      )}
+
+      <Modal open={showNew} onClose={() => setShowNew(false)} title="New company">
+        <form action={(fd) => { startCreate(async () => { await createCompany(fd); setShowNew(false); router.refresh(); }); }} className="space-y-3">
+          <Input label="Company Name" name="name" required/>
+          <Input label="Company URL" name="url"/>
+          <Input label="Industry" name="industry"/>
+          <Textarea label="Reply Notes" name="reply_notes" rows={2}/>
+          <div className="flex gap-2 pt-1">
+            <Button type="submit" variant="primary" size="sm" disabled={isPendingCreate}>Create</Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setShowNew(false)}>Cancel</Button>
+          </div>
+        </form>
+      </Modal>
+    </>
+  );
+}

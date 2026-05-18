@@ -1,36 +1,63 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Traceback Marketing OS
 
-## Getting Started
+Internal marketing dashboard. Next.js 15 + Supabase + Tailwind.
 
-First, run the development server:
+## Setup
 
+### 1. Supabase project
+
+Create a free project at [supabase.com](https://supabase.com). Copy your project URL and keys.
+
+### 2. Run the migration
+
+Using the Supabase CLI:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+supabase link --project-ref YOUR_PROJECT_REF
+supabase db push
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Or paste the contents of `supabase/migrations/0001_init.sql` into the Supabase SQL Editor and run it.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 3. Enable Supabase Realtime
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+In the Supabase dashboard: **Database → Replication → Realtime**. Enable replication for all tables:
+`companies`, `contacts`, `influencers`, `personal_leads`, `content_pieces`, `content_analysis`, `comment_logs`
 
-## Learn More
+### 4. Environment variables
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+cp .env.local.example .env.local
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Fill in:
+- `NEXT_PUBLIC_SUPABASE_URL` — Project URL (Settings → API)
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` — Anon/public key (Settings → API)
+- `SUPABASE_SERVICE_ROLE_KEY` — Service role key (Settings → API)
+- `APP_PASSWORD` — The shared login password
+- `APP_SECRET` — A long random string for HMAC signing (e.g. `openssl rand -hex 32`)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 5. Run locally
 
-## Deploy on Vercel
+```bash
+npm install
+npm run dev
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Visit `http://localhost:3000` — redirects to `/login`.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Deploy to Vercel
+
+1. Push this repo to GitHub.
+2. Import into [Vercel](https://vercel.com) — Next.js is auto-detected.
+3. Add all 5 env vars in Vercel project settings.
+4. Deploy. Share the URL.
+
+## Architecture
+
+| Concern | Approach |
+|---|---|
+| Auth | HMAC-signed `tb_auth` cookie; middleware checks every request |
+| DB reads | Server components via service role key |
+| DB writes | Server actions via service role key |
+| Realtime | Supabase `postgres_changes` → `router.refresh()` |
+| Access model | Single shared password (no user accounts) |
