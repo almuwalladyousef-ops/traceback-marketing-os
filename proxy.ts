@@ -3,7 +3,7 @@ import { verifyAuthToken, COOKIE_NAME } from "@/lib/auth";
 
 const PUBLIC_PREFIXES = ["/login", "/_next", "/favicon.ico"];
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
