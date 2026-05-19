@@ -4,7 +4,7 @@ export type InfluencerStatus = "Active" | "Archived" | "Deleted";
 export type PersonalStatus = "Active" | "Archived" | "Dead";
 export type ContentScope = "personal" | "traceback";
 export type ContentKind = "long_form" | "short_form" | "blogs";
-export type ContentStatus = "Idea" | "Outline" | "Script Draft" | "Script Final" | "Filming" | "Editing" | "Published";
+export type ContentStatus = "Idea" | "Outline" | "Script Draft" | "Script Final" | "Filming" | "Editing" | "Published" | "Deleted";
 
 export interface Company {
   id: string;

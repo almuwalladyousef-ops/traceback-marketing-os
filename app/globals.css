@@ -157,8 +157,10 @@ button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2p
   font-size: 13px;
   font-weight: 500;
   background: none;
-  border: none;
   border-bottom: 1px solid transparent;
+  border-top: none;
+  border-left: none;
+  border-right: none;
   transition: color 0.15s, border-color 0.15s;
 }
 .tab:hover { color: var(--text); }
@@ -362,15 +364,40 @@ input[type="date"]::-webkit-calendar-picker-indicator {
     display: none !important;
   }
 
-  /* Content kind tabs: shrink to fit, no scroll */
+  /* Content kind tabs: pill style, smaller text on mobile */
   .content-kind-tabs {
-    overflow-x: visible;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
   }
+  .content-kind-tabs::-webkit-scrollbar { display: none; }
   .content-kind-tabs button {
-    padding: 8px 0 10px !important;
-    font-size: 12px !important;
+    padding: 5px 8px !important;
+    font-size: 11px !important;
     flex: 1;
-    text-align: center;
+    min-width: 0;
+  }
+
+  /* Channel toggle: hide label, segmented control style */
+  .channel-label {
+    display: none !important;
+  }
+  .scope-toggle-wrap {
+    flex: 1 !important;
+    display: flex !important;
+    background: var(--surface-2) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 9px !important;
+    overflow: hidden !important;
+    padding: 3px !important;
+    gap: 3px !important;
+  }
+  .scope-toggle-wrap button {
+    flex: 1 !important;
+    border-radius: 7px !important;
+    text-align: center !important;
+    border: none !important;
+    box-shadow: none !important;
   }
 
   /* Content scope nav: horizontal scroll */

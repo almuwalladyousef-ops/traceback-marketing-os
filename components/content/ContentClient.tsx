@@ -26,6 +26,7 @@ const STATUS_META: Record<ContentStatus, { color: string; bg: string }> = {
   "Filming":      { color: "var(--purple)",      bg: "color-mix(in oklch, var(--purple) 12%, transparent)" },
   "Editing":      { color: "var(--pink)",        bg: "color-mix(in oklch, var(--pink) 12%, transparent)" },
   "Published":    { color: "var(--green)",       bg: "var(--green-dim)" },
+  "Deleted":      { color: "var(--red, #f87171)", bg: "color-mix(in oklch, var(--red, #f87171) 12%, transparent)" },
 };
 
 // ─── Types ───────────────────────────────────────────────────────────────
@@ -621,13 +622,17 @@ Keep each answer to 2-3 sentences max.`;
 
 // ─── AnalysisTab ─────────────────────────────────────────────────────────
 
-function AnalysisTab({ entries, pieces, onAdd, onOpenPiece }: {
+function AnalysisTab({ entries, pieces, onAdd, onOpenPiece, showAddExternal, onCloseExternal }: {
   entries: AnalysisWithPiece[];
   pieces: ContentPiece[];
   onAdd: (e: AnalysisWithPiece) => void;
   onOpenPiece: (p: ContentPiece) => void;
+  showAddExternal?: boolean;
+  onCloseExternal?: () => void;
 }) {
-  const [showAdd, setShowAdd] = useState(false);
+  const [showAddLocal, setShowAddLocal] = useState(false);
+  const showAdd = showAddLocal || !!showAddExternal;
+  function closeAdd() { setShowAddLocal(false); onCloseExternal?.(); }
   const [selected, setSelected] = useState<AnalysisWithPiece | null>(null);
   const [form, setForm] = useState({ content_piece_id: "", what_worked: "", what_didnt: "", key_lesson: "", apply_to_next: "" });
   const [, startTransition] = useTransition();
@@ -649,7 +654,7 @@ function AnalysisTab({ entries, pieces, onAdd, onOpenPiece }: {
         onAdd({ ...res.data, content_pieces: { id: piece.id, title: piece.title } });
       }
     });
-    setShowAdd(false);
+    closeAdd();
     setForm({ content_piece_id: "", what_worked: "", what_didnt: "", key_lesson: "", apply_to_next: "" });
   }
 
@@ -657,17 +662,6 @@ function AnalysisTab({ entries, pieces, onAdd, onOpenPiece }: {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 14 }}>
-        <button onClick={() => setShowAdd(true)} style={{
-          display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px",
-          borderRadius: 8, background: "var(--accent)", color: "#1a1208", border: "none",
-          fontSize: 12.5, fontWeight: 600, cursor: "pointer",
-        }}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
-          New entry
-        </button>
-      </div>
-
       <div className="card" style={{ padding: 0, overflow: "hidden" }}>
         <div style={{
           display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr 1fr",
@@ -709,7 +703,7 @@ function AnalysisTab({ entries, pieces, onAdd, onOpenPiece }: {
       {/* Add modal */}
       {showAdd && (
         <>
-          <div onClick={() => setShowAdd(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)", zIndex: 60, animation: "fade-in 0.2s" }}/>
+          <div onClick={closeAdd} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)", zIndex: 60, animation: "fade-in 0.2s" }}/>
           <div style={{
             position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
             width: "90vw", maxWidth: 500, background: "var(--surface)", border: "1px solid var(--border-strong)",
@@ -718,7 +712,7 @@ function AnalysisTab({ entries, pieces, onAdd, onOpenPiece }: {
           }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
               <div style={{ fontSize: 15, fontWeight: 600 }}>New analysis entry</div>
-              <button onClick={() => setShowAdd(false)} className="btn-icon">
+              <button onClick={closeAdd} className="btn-icon">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
               </button>
             </div>
@@ -744,7 +738,7 @@ function AnalysisTab({ entries, pieces, onAdd, onOpenPiece }: {
               ))}
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                 <button type="submit" style={{ flex: 1, padding: "8px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "var(--accent)", color: "#1a1208", border: "none", cursor: "pointer" }}>Add entry</button>
-                <button type="button" onClick={() => setShowAdd(false)} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 13, background: "transparent", color: "var(--text-muted)", border: "1px solid var(--border)", cursor: "pointer" }}>Cancel</button>
+                <button type="button" onClick={closeAdd} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 13, background: "transparent", color: "var(--text-muted)", border: "1px solid var(--border)", cursor: "pointer" }}>Cancel</button>
               </div>
             </form>
           </div>
@@ -913,26 +907,34 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
     if (typeof window === "undefined") return "traceback";
     return (localStorage.getItem("content_scope") as ContentScope) ?? "traceback";
   });
-  const [kind, setKind] = useState<ContentKind | "analysis">(() => {
+  const [kind, setKind] = useState<ContentKind | "analysis" | "deleted">(() => {
     if (typeof window === "undefined") return "short_form";
-    return (localStorage.getItem("content_kind") as ContentKind | "analysis") ?? "short_form";
+    return (localStorage.getItem("content_kind") as ContentKind | "analysis" | "deleted") ?? "short_form";
   });
   const [view, setView] = useState<"board" | "list">("board");
   const [selectedPiece, setSelectedPiece] = useState<ContentPiece | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [newDefaultStatus, setNewDefaultStatus] = useState<ContentStatus>("Idea");
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [showAddAnalysis, setShowAddAnalysis] = useState(false);
   const [, startTransition] = useTransition();
 
   const isAnalysis = kind === "analysis";
+  const isDeleted = kind === "deleted";
 
   const filtered = useMemo(
-    () => pieces.filter((p) => p.scope === scope && p.kind === kind),
+    () => pieces.filter((p) => p.scope === scope && p.kind === kind && p.status !== "Deleted"),
     [pieces, scope, kind]
   );
 
   const filteredAnalysis = useMemo(
     () => analysis.filter((a) => a.scope === scope),
     [analysis, scope]
+  );
+
+  const deletedPieces = useMemo(
+    () => pieces.filter((p) => p.scope === scope && p.status === "Deleted"),
+    [pieces, scope]
   );
 
   // Realtime sync
@@ -960,8 +962,22 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
   }
 
   function removePiece(id: string) {
-    setPieces((ps) => ps.filter((p) => p.id !== id));
+    setPieces((ps) => ps.map((p) => p.id === id ? { ...p, status: "Deleted" as ContentStatus } : p));
     setSelectedPiece(null);
+    startTransition(async () => {
+      await updateContentPiece(id, { status: "Deleted" });
+    });
+  }
+
+  function restorePiece(id: string) {
+    setPieces((ps) => ps.map((p) => p.id === id ? { ...p, status: "Idea" as ContentStatus } : p));
+    startTransition(async () => {
+      await updateContentPiece(id, { status: "Idea" });
+    });
+  }
+
+  function permanentlyDeletePiece(id: string) {
+    setPieces((ps) => ps.filter((p) => p.id !== id));
     startTransition(async () => {
       await deleteContentPiece(id);
     });
@@ -991,8 +1007,8 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
 
   return (
     <div className="fade-in">
-      {/* Mobile: View toggle + New piece button in TopBar */}
-      {!isAnalysis && (
+      {/* Mobile: View toggle + Analysis/Deleted nav + New piece button in TopBar */}
+      {!isAnalysis && !isDeleted && (
         <MobileActionsPortal>
           <div style={{ display: "flex", gap: 2, padding: 2, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 7 }}>
             {([["board", "⊞"], ["list", "☰"]] as [string, string][]).map(([v, icon]) => (
@@ -1014,83 +1030,171 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
           </button>
         </MobileActionsPortal>
       )}
+      {/* Mobile: New entry button in TopBar when on Analysis tab */}
+      {isAnalysis && (
+        <MobileActionsPortal>
+          <button
+            onClick={() => setShowAddAnalysis(true)}
+            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8, background: "var(--accent)", color: "#1a1208", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)" }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New entry
+          </button>
+        </MobileActionsPortal>
+      )}
 
       {/* Scope + view toggle row */}
       <div className="content-top-bar" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, padding: "14px 18px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontSize: 11, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 }}>Channel</span>
-          <div style={{ display: "flex", gap: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1 }}>
+          <span className="channel-label" style={{ fontSize: 11, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 }}>Channel</span>
+          <div className="scope-toggle-wrap" style={{ display: "flex", gap: 4 }}>
             {SCOPES.map((s) => (
               <button key={s} onClick={() => { setScope(s); localStorage.setItem("content_scope", s); }} style={{
                 padding: "7px 20px", borderRadius: 8, fontSize: 13.5, fontWeight: scope === s ? 600 : 400,
                 background: scope === s ? "var(--accent)" : "transparent",
                 color: scope === s ? "#1a1208" : "var(--text-muted)",
-                border: scope === s ? "none" : "1px solid var(--border)",
+                border: `1px solid ${scope === s ? "transparent" : "var(--border)"}`,
                 cursor: "pointer", transition: "all 0.15s",
                 boxShadow: scope === s ? "inset 0 1px 0 rgba(255,255,255,0.15), 0 2px 6px oklch(0.78 0.14 75 / 0.2)" : "none",
               }}>{s.charAt(0).toUpperCase() + s.slice(1)}</button>
             ))}
           </div>
         </div>
-        {!isAnalysis && (
+        {!isDeleted && (
           <div className="page-actions" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ display: "flex", gap: 2, padding: 2, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 7 }}>
-              {([["board", "⊞"], ["list", "☰"]] as [string, string][]).map(([v, icon]) => (
-                <button key={v} onClick={() => setView(v as "board" | "list")} style={{
-                  width: 28, height: 28, borderRadius: 5, fontSize: 14,
-                  background: view === v ? "var(--surface)" : "transparent",
-                  color: view === v ? "var(--text)" : "var(--text-muted)",
-                  border: "none", cursor: "pointer",
-                  boxShadow: view === v ? "inset 0 0 0 1px var(--border)" : "none",
-                }}>{icon}</button>
-              ))}
-            </div>
-            <button onClick={() => { setNewDefaultStatus("Idea"); setShowNew(true); }} style={{
-              display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px",
-              borderRadius: 8, background: "var(--accent)", color: "#1a1208",
-              border: "none", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
-              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)",
-            }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
-              New piece
-            </button>
+            {!isAnalysis && (
+              <div style={{ display: "flex", gap: 2, padding: 2, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 7 }}>
+                {([["board", "⊞"], ["list", "☰"]] as [string, string][]).map(([v, icon]) => (
+                  <button key={v} onClick={() => setView(v as "board" | "list")} style={{
+                    width: 28, height: 28, borderRadius: 5, fontSize: 14,
+                    background: view === v ? "var(--surface)" : "transparent",
+                    color: view === v ? "var(--text)" : "var(--text-muted)",
+                    border: "none", cursor: "pointer",
+                    boxShadow: view === v ? "inset 0 0 0 1px var(--border)" : "none",
+                  }}>{icon}</button>
+                ))}
+              </div>
+            )}
+            {isAnalysis ? (
+              <button onClick={() => setShowAddAnalysis(true)} style={{
+                display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px",
+                borderRadius: 8, background: "var(--accent)", color: "#1a1208",
+                border: "none", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)",
+              }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                New entry
+              </button>
+            ) : (
+              <button onClick={() => { setNewDefaultStatus("Idea"); setShowNew(true); }} style={{
+                display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px",
+                borderRadius: 8, background: "var(--accent)", color: "#1a1208",
+                border: "none", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)",
+              }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                New piece
+              </button>
+            )}
           </div>
         )}
       </div>
 
       {/* Kind tabs */}
-      <div className="content-kind-tabs" style={{ display: "flex", alignItems: "flex-end", gap: 0, borderBottom: "1px solid var(--border)", marginBottom: 16 }}>
-        {([...KINDS, "analysis"] as (ContentKind | "analysis")[]).map((k) => {
-          const label = k === "analysis" ? "Analysis" : KIND_LABELS[k as ContentKind];
+      <div className="content-kind-tabs" style={{ display: "flex", alignItems: "center", gap: 4, padding: 3, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, marginBottom: 16 }}>
+        {([...KINDS, "analysis", "deleted"] as (ContentKind | "analysis" | "deleted")[]).map((k) => {
+          const label = k === "analysis" ? "Analysis" : k === "deleted" ? "Deleted" : KIND_LABELS[k as ContentKind];
           const isActive = kind === k;
+          const isDeletedTab = k === "deleted";
           return (
             <button key={k} onClick={() => { setKind(k); localStorage.setItem("content_kind", k); }} style={{
-              padding: "9px 20px 12px", fontSize: 13, fontWeight: isActive ? 500 : 400,
-              background: "transparent", border: "none", cursor: "pointer",
-              color: isActive ? "var(--text)" : "var(--text-muted)",
-              borderBottom: `2px solid ${isActive ? "var(--accent)" : "transparent"}`,
-              transition: "color 0.15s, border-color 0.15s", whiteSpace: "nowrap",
-            }}>{label}</button>
+              flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+              padding: "6px 12px", borderRadius: 7, whiteSpace: "nowrap",
+              background: isActive ? "var(--surface-2)" : "transparent",
+              color: isActive ? (isDeletedTab ? "var(--red, #f87171)" : "var(--text)") : "var(--text-muted)",
+              border: "none", fontSize: 13, fontWeight: isActive ? 500 : 400,
+              boxShadow: isActive ? "inset 0 0 0 1px var(--border), 0 1px 2px rgba(0,0,0,0.3)" : "none",
+              cursor: "pointer", transition: "background 0.15s, color 0.15s",
+            }}>
+              {label}
+              {isDeletedTab && deletedPieces.length > 0 && (
+                <span style={{
+                  fontSize: 10, fontWeight: 600, padding: "1px 5px", borderRadius: 4,
+                  background: "color-mix(in oklch, var(--red, #f87171) 15%, transparent)",
+                  color: "var(--red, #f87171)",
+                }}>{deletedPieces.length}</span>
+              )}
+            </button>
           );
         })}
       </div>
 
+      {/* Stats + main content — keyed to scope so it fades in on scope switch */}
+      <div key={scope} className="fade-in">
       {/* Stats */}
-      {!isAnalysis && <ContentStats pieces={filtered} today={today}/>}
+      {!isAnalysis && !isDeleted && <ContentStats pieces={filtered} today={today}/>}
 
       {/* Main content */}
-      {isAnalysis ? (
+      {isDeleted ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {deletedPieces.length === 0 ? (
+            <div style={{ padding: "60px 24px", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>No deleted pieces</div>
+          ) : (
+            deletedPieces.map((p) => (
+              <div key={p.id} style={{
+                display: "flex", alignItems: "center", gap: 12,
+                padding: "12px 16px", background: "var(--surface)", border: "1px solid var(--border)",
+                borderRadius: 10,
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 500, color: "var(--text)", marginBottom: 2 }}>{p.title}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{KIND_LABELS[p.kind]} · {p.scope}</div>
+                </div>
+                <button
+                  onClick={() => restorePiece(p.id)}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                    padding: "5px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500,
+                    background: "var(--surface-2)", color: "var(--text-muted)",
+                    border: "1px solid var(--border)", cursor: "pointer",
+                  }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
+                  Restore
+                </button>
+                <button
+                  onClick={() => setConfirmDeleteId(p.id)}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                    padding: "5px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500,
+                    background: "color-mix(in oklch, var(--red, #f87171) 10%, transparent)",
+                    color: "var(--red, #f87171)",
+                    border: "1px solid color-mix(in oklch, var(--red, #f87171) 25%, transparent)",
+                    cursor: "pointer",
+                  }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M5 6l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"/></svg>
+                  Delete permanently
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      ) : isAnalysis ? (
         <AnalysisTab
           entries={filteredAnalysis}
           pieces={pieces}
           onAdd={(e) => setAnalysis((a) => [e, ...a])}
           onOpenPiece={openPieceFromAnalysis}
+          showAddExternal={showAddAnalysis}
+          onCloseExternal={() => setShowAddAnalysis(false)}
         />
       ) : view === "board" ? (
         <KanbanBoard pieces={filtered} today={today} onOpen={setSelectedPiece} onAddCard={addCardAtStatus}/>
       ) : (
         <TableView pieces={filtered} today={today} onOpen={setSelectedPiece}/>
       )}
+      </div>
 
       {/* Piece slide-over */}
       {liveSelected && (
@@ -1109,7 +1213,7 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
       )}
 
       {/* New piece modal */}
-      {showNew && kind !== "analysis" && (
+      {showNew && kind !== "analysis" && kind !== "deleted" && (
         <NewPieceModal
           onClose={() => setShowNew(false)}
           onAdd={addPiece}
@@ -1118,6 +1222,61 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
           defaultStatus={newDefaultStatus}
         />
       )}
+
+      {/* Permanent delete warning dialog */}
+      {confirmDeleteId && (() => {
+        const piece = pieces.find((p) => p.id === confirmDeleteId);
+        return (
+          <>
+            <div onClick={() => setConfirmDeleteId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)", zIndex: 70, animation: "fade-in 0.18s" }}/>
+            <div style={{
+              position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+              width: "90vw", maxWidth: 420, background: "var(--surface)",
+              border: "1px solid var(--border-strong)", borderRadius: 14, padding: 24,
+              zIndex: 71, boxShadow: "0 24px 64px rgba(0,0,0,0.55)",
+              animation: "fade-in 0.15s",
+            }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 20 }}>
+                <div style={{
+                  width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+                  background: "color-mix(in oklch, var(--red, #f87171) 12%, transparent)",
+                  border: "1px solid color-mix(in oklch, var(--red, #f87171) 25%, transparent)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--red, #f87171)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M5 6l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"/></svg>
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)", marginBottom: 5 }}>Delete permanently?</div>
+                  <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.55 }}>
+                    <strong style={{ color: "var(--text)" }}>&ldquo;{piece?.title}&rdquo;</strong> will be gone forever. This cannot be undone.
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => { permanentlyDeletePiece(confirmDeleteId); setConfirmDeleteId(null); }}
+                  style={{
+                    flex: 1, padding: "9px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+                    background: "var(--red, #f87171)", color: "#fff", border: "none", cursor: "pointer",
+                  }}
+                >
+                  Yes, delete forever
+                </button>
+                <button
+                  onClick={() => setConfirmDeleteId(null)}
+                  style={{
+                    padding: "9px 18px", borderRadius: 8, fontSize: 13,
+                    background: "transparent", color: "var(--text-muted)",
+                    border: "1px solid var(--border)", cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }

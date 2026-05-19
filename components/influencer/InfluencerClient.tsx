@@ -17,7 +17,7 @@ import type { Influencer } from "@/lib/supabase/types";
 import { getBrowserClient } from "@/lib/supabase/browser";
 import { MobileActionsPortal, MobileMoreMenu } from "@/components/shell/MobileActionsPortal";
 
-type InfWithDue = Influencer & { dueTouch: "touch_1" | "touch_2" | "touch_3" | "re_engage" | null };
+type InfWithDue = Influencer & { dueTouch: "touch_1" | "touch_2" | "touch_3" | "re_engage" | null; dueArchive: boolean };
 
 function fmtDate(d: string | null) {
   if (!d) return "";
@@ -65,7 +65,8 @@ function InfluencerStats({ influencers }: { influencers: InfWithDue[] }) {
   const live = influencers.filter((i) => i.status !== "Deleted");
   const active = live.filter((i) => i.status === "Active");
   const replied = active.filter((i) => i.replied).length;
-  const due = active.filter((i) => i.dueTouch).length;
+  const reEngageDue = live.filter((i) => i.status === "Archived" && i.dueTouch === "re_engage").length;
+  const due = active.filter((i) => i.dueTouch).length + reEngageDue;
   const ig = active.filter((i) => i.platform === "IG").length;
   const xct = active.filter((i) => i.platform === "X").length;
   return (
@@ -76,7 +77,7 @@ function InfluencerStats({ influencers }: { influencers: InfWithDue[] }) {
       overflow: "hidden", marginBottom: 18, minWidth: 600,
     }}>
       {[
-        { label: "Due today", value: due, color: "var(--accent)", note: "touches pending" },
+        { label: "Due", value: due, color: "var(--accent)", note: reEngageDue > 0 ? `${reEngageDue} re-engage ready` : "touches pending" },
         { label: "Active", value: active.length, color: "var(--text)", note: `${ig} IG · ${xct} X` },
         { label: "Replied", value: replied, color: "var(--green)", note: `${active.length > 0 ? Math.round(replied / active.length * 100) : 0}% reply rate` },
         { label: "Archived", value: live.filter((i) => i.status === "Archived").length, color: "var(--text-muted)", note: "completed outreach" },
@@ -179,7 +180,7 @@ function InfTouchCell({ checked, date, disabled, onToggle, onDateChange }: {
 }
 
 /* ─── Influencer row ────────────────────────────────────────────────── */
-function InfluencerRow({ inf, num, selected, today, onSelect, onFieldUpdate, onTouchToggle, onTouchDateChange, onArchive, onSoftDelete, onPermDelete, onRestore }: {
+function InfluencerRow({ inf, num, selected, today, onSelect, onFieldUpdate, onTouchToggle, onTouchDateChange, onArchive, onSoftDelete, onPermDelete, onRestore, onReEngage }: {
   inf: InfWithDue;
   num: number;
   selected: boolean;
@@ -192,6 +193,7 @@ function InfluencerRow({ inf, num, selected, today, onSelect, onFieldUpdate, onT
   onSoftDelete: (id: string) => void;
   onPermDelete: (id: string) => void;
   onRestore: (id: string) => void;
+  onReEngage: (id: string) => void;
 }) {
   const handle = inf.link.split("/").pop() ?? inf.link;
   const isArchived = inf.status === "Archived";
@@ -204,6 +206,7 @@ function InfluencerRow({ inf, num, selected, today, onSelect, onFieldUpdate, onT
       alignItems: "center", padding: "12px 14px",
       borderTop: "1px solid var(--border)",
       background: selected ? "color-mix(in oklch, var(--accent) 8%, transparent)" : "transparent",
+      borderLeft: (inf.dueArchive && !isArchived) ? "2px solid var(--red)" : (inf.dueTouch && !isArchived) ? "2px solid var(--accent)" : "2px solid transparent",
       opacity: isArchived ? 0.55 : 1,
       minHeight: 64, transition: "background 0.12s",
     }}>
@@ -320,7 +323,12 @@ function InfluencerRow({ inf, num, selected, today, onSelect, onFieldUpdate, onT
           </>
         ) : isArchived ? (
           <>
-            <button onClick={() => onRestore(inf.id)} className="btn-icon" title="Restore to Active" style={{ width: 26, height: 26 }}>
+            <button
+              onClick={() => inf.dueTouch === "re_engage" ? onReEngage(inf.id) : onRestore(inf.id)}
+              className="btn-icon"
+              title={inf.dueTouch === "re_engage" ? "Re-engage" : "Restore to Active"}
+              style={{ width: 26, height: 26, color: inf.dueTouch === "re_engage" ? "var(--accent)" : undefined }}
+            >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
             </button>
             <button onClick={() => onSoftDelete(inf.id)} className="btn-icon" title="Delete" style={{ width: 26, height: 26 }}>
@@ -423,6 +431,7 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
   const [platformFilter, setPlatformFilter] = useState("All");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showAdd, setShowAdd] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
   const [isPendingImport, startImport] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -449,9 +458,20 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
   }
 
   function handleTouchToggle(id: string, touch: "touch_1" | "touch_2" | "touch_3", checked: boolean) {
+    const inf = influencers.find((i) => i.id === id);
+    const autoArchive = touch === "touch_3" && checked && !!inf && !inf.replied;
     const dateField = `${touch}_date` as keyof InfWithDue;
-    setInfluencers((list) => list.map((i) => i.id === id ? { ...i, [touch]: checked, [dateField]: checked ? today : null } : i));
-    startTransition(async () => { await setTouch(id, touch, checked); });
+    setInfluencers((list) => list.map((i) => {
+      if (i.id !== id) return i;
+      const updated = { ...i, [touch]: checked, [dateField]: checked ? today : null };
+      if (autoArchive) updated.status = "Archived";
+      if (touch === "touch_3") updated.dueArchive = false;
+      return updated;
+    }));
+    startTransition(async () => {
+      await setTouch(id, touch, checked);
+      if (autoArchive) await archiveInfluencer(id);
+    });
   }
 
   function handleTouchDateChange(id: string, field: string, value: string) {
@@ -477,6 +497,16 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
   function handleRestore(id: string) {
     setInfluencers((list) => list.map((i) => i.id === id ? { ...i, status: "Active" as const } : i));
     startTransition(async () => { await restoreInfluencer(id); });
+  }
+
+  function handleReEngage(id: string) {
+    setInfluencers((list) => list.map((i) => i.id === id ? {
+      ...i, status: "Active" as const,
+      touch_1: false, touch_2: false, touch_3: false,
+      touch_1_date: null, touch_2_date: null, touch_3_date: null,
+      archive_date: null, dueTouch: null, dueArchive: false,
+    } : i));
+    startTransition(async () => { await reEngageInfluencer(id); });
   }
 
   function selectOne(id: string, on: boolean) {
@@ -664,8 +694,9 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
                   onTouchDateChange={handleTouchDateChange}
                   onArchive={handleArchive}
                   onSoftDelete={handleSoftDelete}
-                  onPermDelete={handlePermDelete}
+                  onPermDelete={setConfirmDeleteId}
                   onRestore={handleRestore}
+                  onReEngage={handleReEngage}
                 />
               ))
             )}
@@ -676,9 +707,90 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
       {showAdd && (
         <AddInfluencerModal
           onClose={() => setShowAdd(false)}
-          onAdd={(fd) => startTransition(async () => { await createInfluencer(fd); })}
+          onAdd={(fd) => {
+            const tempInf: InfWithDue = {
+              id: `temp-${Date.now()}`,
+              link: (fd.get("link") as string) || "",
+              platform: (fd.get("platform") as "IG" | "X") || "IG",
+              notes: (fd.get("notes") as string) || null,
+              touch_1: false, touch_2: false, touch_3: false,
+              touch_1_date: null, touch_2_date: null, touch_3_date: null,
+              status: "Active",
+              archive_date: null,
+              cycle_count: 0,
+              replied: false,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              dueTouch: null,
+              dueArchive: false,
+            };
+            setInfluencers((list) => [tempInf, ...list]);
+            startTransition(async () => {
+              const result = await createInfluencer(fd);
+              if (result && "error" in result) {
+                alert("Failed to add influencer: " + result.error);
+                setInfluencers((list) => list.filter((i) => i.id !== tempInf.id));
+              } else {
+                router.refresh();
+              }
+            });
+          }}
         />
       )}
+
+      {confirmDeleteId && (() => {
+        const inf = influencers.find((i) => i.id === confirmDeleteId);
+        return (
+          <>
+            <div onClick={() => setConfirmDeleteId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)", zIndex: 70, animation: "fade-in 0.18s" }}/>
+            <div style={{
+              position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+              width: "90vw", maxWidth: 420, background: "var(--surface)",
+              border: "1px solid var(--border-strong)", borderRadius: 14, padding: 24,
+              zIndex: 71, boxShadow: "0 24px 64px rgba(0,0,0,0.55)",
+              animation: "fade-in 0.15s",
+            }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 20 }}>
+                <div style={{
+                  width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+                  background: "color-mix(in oklch, var(--red, #f87171) 12%, transparent)",
+                  border: "1px solid color-mix(in oklch, var(--red, #f87171) 25%, transparent)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--red, #f87171)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M5 6l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"/></svg>
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)", marginBottom: 5 }}>Delete permanently?</div>
+                  <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.55 }}>
+                    <strong style={{ color: "var(--text)" }}>&ldquo;{inf?.link}&rdquo;</strong> will be gone forever. This cannot be undone.
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => { handlePermDelete(confirmDeleteId); setConfirmDeleteId(null); }}
+                  style={{
+                    flex: 1, padding: "9px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+                    background: "var(--red, #f87171)", color: "#fff", border: "none", cursor: "pointer",
+                  }}
+                >
+                  Yes, delete forever
+                </button>
+                <button
+                  onClick={() => setConfirmDeleteId(null)}
+                  style={{
+                    padding: "9px 18px", borderRadius: 8, fontSize: 13,
+                    background: "transparent", color: "var(--text-muted)",
+                    border: "1px solid var(--border)", cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }

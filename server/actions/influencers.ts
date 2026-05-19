@@ -10,6 +10,7 @@ const ALLOWED_INFLUENCER_FIELDS = new Set([
   "link", "platform", "status", "archive_date",
   "touch_1", "touch_2", "touch_3",
   "touch_1_date", "touch_2_date", "touch_3_date",
+  "notes", "replied",
 ]);
 
 const InfluencerSchema = z.object({
@@ -23,7 +24,11 @@ export async function createInfluencer(formData: FormData) {
   const parsed = InfluencerSchema.parse({ link: raw.link, platform: raw.platform, notes: raw.notes || null });
 
   const db = createServerClient();
-  const { error } = await db.from("influencers").insert(parsed);
+  const { error } = await db.from("influencers").insert({
+    link: parsed.link,
+    platform: parsed.platform,
+    notes: parsed.notes ?? null,
+  });
   if (error) return dbErr(error);
 
   revalidatePath("/influencer-outreach");

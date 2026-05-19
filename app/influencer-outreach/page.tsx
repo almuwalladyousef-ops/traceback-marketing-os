@@ -1,5 +1,5 @@
 import { createServerClient } from "@/lib/supabase/server";
-import { influencerDueTouch, todayStr } from "@/lib/date";
+import { influencerDueTouch, influencerDueArchive, todayStr } from "@/lib/date";
 import { InfluencerClient } from "@/components/influencer/InfluencerClient";
 import type { Influencer } from "@/lib/supabase/types";
 
@@ -16,6 +16,7 @@ export default async function InfluencerOutreachPage() {
   const influencers = rows.map((i) => ({
     ...i,
     dueTouch: influencerDueTouch(i),
+    dueArchive: influencerDueArchive(i),
   }));
 
   return <InfluencerClient influencers={influencers} today={todayStr()} />;

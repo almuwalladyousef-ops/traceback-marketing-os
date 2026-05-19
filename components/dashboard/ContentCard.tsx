@@ -127,7 +127,7 @@ export function ContentCard({ inProgress, inProgressPieces, scheduledThisWeek, p
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <span style={{ width: 4, height: 24, borderRadius: 2, background: statusColor, flexShrink: 0 }}/>
                         <div>
-                          <Link href={`/content/${p.scope}/piece/${p.id}`} style={{ color: "var(--text)", fontWeight: 500, textDecoration: "none" }}>
+                          <Link href="/content" style={{ color: "var(--text)", fontWeight: 500, textDecoration: "none" }}>
                             {p.title}
                           </Link>
                           <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 1 }}>

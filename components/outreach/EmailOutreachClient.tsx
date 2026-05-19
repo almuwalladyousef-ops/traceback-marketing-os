@@ -2,13 +2,11 @@
 
 import { useState, useTransition, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Modal } from "@/components/ui/Modal";
-import { Input, Textarea } from "@/components/ui/Input";
-import { Button } from "@/components/ui/Button";
 import {
   updateCompanyField,
   archiveCompany,
   unarchiveCompany,
+  reEngageCompany,
   softDeleteCompany,
   restoreCompany,
   deleteCompany,
@@ -23,7 +21,7 @@ import type { Company, Contact } from "@/lib/supabase/types";
 import { Plus, Upload, X, ExternalLink, ArchiveRestore, Trash2, RotateCcw, Archive } from "lucide-react";
 import { MobileActionsPortal, MobileMoreMenu } from "@/components/shell/MobileActionsPortal";
 
-type CompanyWithDue = Company & { due: boolean };
+type CompanyWithDue = Company & { due: boolean; dueArchive: boolean; reEngageDue: boolean };
 type Filter = "not_started" | "sent" | "bump1" | "bump2" | "replied" | "archived" | "deleted";
 type Sort = "oldest" | "newest" | "az";
 
@@ -84,14 +82,14 @@ function StatsStrip({ companies }: { companies: CompanyWithDue[] }) {
   const dueToday = active.filter((c) => {
     if (!c.outreach_date || c.status === "Replied" || c.status === "Dead") return false;
     const d1 = daysAgo(c.outreach_date) ?? 0;
-    if (!c.follow_up_date) return d1 >= 3;
+    if (!c.follow_up_date) return d1 >= 2;
     const d2 = daysAgo(c.follow_up_date) ?? 0;
-    if (!c.follow_up_2_date) return d2 >= 4;
+    if (!c.follow_up_2_date) return d2 >= 5;
     return false;
-  }).length;
+  }).length + companies.filter((c) => c.reEngageDue).length;
 
   const stats = [
-    { label: "Due today", value: dueToday, color: "var(--accent)", note: "outreach + bumps" },
+    { label: "Due", value: dueToday, color: "var(--accent)", note: "outreach + bumps" },
     { label: "Active pipeline", value: active.length, color: "var(--text)", note: `${sent} contacted` },
     { label: "Replies", value: replied, color: "var(--green)", note: `${replyRate}% reply rate` },
     { label: "This week sent", value: 23, color: "var(--text)", note: "+8 vs last week", spark: [3, 5, 4, 7, 6, 9, 8] },
@@ -376,11 +374,13 @@ function CompanySlideOver({
   contacts,
   onClose,
   startAddContact,
+  onPermDelete,
 }: {
   company: CompanyWithDue;
   contacts: Contact[];
   onClose: () => void;
   startAddContact: boolean;
+  onPermDelete: (id: string) => void;
 }) {
   const [showAdd, setShowAdd] = useState(startAddContact);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -658,6 +658,8 @@ function CompanyRow({
   selected,
   onSelect,
   onOpenDetail,
+  onPermDelete,
+  onReEngage,
 }: {
   company: CompanyWithDue;
   contacts: Contact[];
@@ -665,6 +667,8 @@ function CompanyRow({
   selected: boolean;
   onSelect: (id: string, checked: boolean) => void;
   onOpenDetail: (c: CompanyWithDue, addContact: boolean) => void;
+  onPermDelete: (id: string) => void;
+  onReEngage: (id: string) => void;
 }) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -682,6 +686,19 @@ function CompanyRow({
     status: company.status,
     reply_notes: company.reply_notes ?? "",
   });
+
+  useEffect(() => {
+    setVals({
+      name: company.name,
+      url: company.url ?? "",
+      industry: company.industry ?? "",
+      outreach_date: company.outreach_date ?? "",
+      follow_up_date: company.follow_up_date ?? "",
+      follow_up_2_date: company.follow_up_2_date ?? "",
+      status: company.status,
+      reply_notes: company.reply_notes ?? "",
+    });
+  }, [company]);
 
   function save(field: string, value: string | null) {
     startTransition(async () => {
@@ -714,6 +731,21 @@ function CompanyRow({
     startTransition(async () => { await action(); router.refresh(); });
   }
 
+  const isDue = !dimmed && (() => {
+    if (company.reEngageDue) return true;
+    if (!vals.outreach_date || ["Replied", "In Conversation", "Dead"].includes(vals.status)) return false;
+    const d1 = daysAgo(vals.outreach_date) ?? 0;
+    if (!vals.follow_up_date) return d1 >= 2;
+    const d2 = daysAgo(vals.follow_up_date) ?? 0;
+    if (!vals.follow_up_2_date) return d2 >= 5;
+    return false;
+  })();
+
+  const isDueArchive = !dimmed &&
+    !!vals.follow_up_2_date &&
+    (daysAgo(vals.follow_up_2_date) ?? 0) >= 3 &&
+    !["Replied", "In Conversation", "Dead"].includes(vals.status);
+
   return (
     <div
       className="row-hover"
@@ -725,6 +757,7 @@ function CompanyRow({
         padding: "12px 14px",
         borderTop: "1px solid var(--border)",
         background: selected ? "color-mix(in oklch, var(--accent) 8%, transparent)" : "transparent",
+        borderLeft: isDueArchive ? "2px solid var(--red)" : isDue ? "2px solid var(--accent)" : "2px solid transparent",
         opacity: dimmed ? 0.55 : 1,
         minHeight: 64,
       }}
@@ -792,7 +825,14 @@ function CompanyRow({
         {isSoftDeleted ? (
           <>
             <button onClick={() => run(() => restoreCompany(company.id))} disabled={isPending} className="btn-icon" title="Restore" style={{ width: 26, height: 26 }}><RotateCcw size={13}/></button>
-            <button onClick={() => { if (window.confirm(`Permanently delete "${vals.name}"?`)) run(() => deleteCompany(company.id)); }} disabled={isPending} className="btn-icon" title="Delete permanently" style={{ width: 26, height: 26, color: "var(--red)" }}><Trash2 size={13}/></button>
+            <button onClick={() => onPermDelete(company.id)} disabled={isPending} className="btn-icon" title="Delete permanently" style={{ width: 26, height: 26, color: "var(--red)" }}><Trash2 size={13}/></button>
+          </>
+        ) : isArchived && company.reEngageDue ? (
+          <>
+            <button onClick={() => onReEngage(company.id)} disabled={isPending} className="btn-icon" title="Re-engage" style={{ width: 26, height: 26, color: "var(--accent)" }}>
+              <RotateCcw size={13}/>
+            </button>
+            <button onClick={() => run(() => softDeleteCompany(company.id))} disabled={isPending} className="btn-icon" title="Delete" style={{ width: 26, height: 26 }}><Trash2 size={13}/></button>
           </>
         ) : (
           <>
@@ -804,6 +844,66 @@ function CompanyRow({
         )}
       </div>
     </div>
+  );
+}
+
+/* ─── Add company modal ───────────────────────────────────────────────── */
+function AddCompanyModal({ onClose, onAdd }: { onClose: () => void; onAdd: (fd: FormData) => void }) {
+  const inp: React.CSSProperties = {
+    width: "100%", padding: "7px 10px", borderRadius: 7,
+    background: "var(--surface-2)", border: "1px solid var(--border)",
+    color: "var(--text)", fontSize: 13, fontFamily: "inherit", outline: "none",
+  };
+  const focusBorder = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    ((e.target as HTMLElement).style.borderColor = "var(--accent-line)");
+  const blurBorder = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    ((e.target as HTMLElement).style.borderColor = "var(--border)");
+
+  function submit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    onAdd(new FormData(e.currentTarget));
+    onClose();
+  }
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)", zIndex: 60 }}/>
+      <div style={{
+        position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+        width: "90vw", maxWidth: 440, background: "var(--surface)", border: "1px solid var(--border-strong)",
+        borderRadius: 14, padding: 24, zIndex: 61,
+        boxShadow: "0 24px 64px rgba(0,0,0,0.5)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>Add company</div>
+          <button onClick={onClose} className="btn-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 5 }}>Company name *</div>
+            <input name="name" required autoFocus placeholder="Acme Corp" style={inp} onFocus={focusBorder} onBlur={blurBorder}/>
+          </div>
+          <div>
+            <div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 5 }}>Website</div>
+            <input name="url" placeholder="domain.com" style={inp} onFocus={focusBorder} onBlur={blurBorder}/>
+          </div>
+          <div>
+            <div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 5 }}>Industry</div>
+            <input name="industry" placeholder="e.g. SaaS, E-commerce, Health…" style={inp} onFocus={focusBorder} onBlur={blurBorder}/>
+          </div>
+          <div>
+            <div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 5 }}>Notes</div>
+            <textarea name="reply_notes" rows={2} placeholder="Optional notes…" style={{ ...inp, resize: "none" }} onFocus={focusBorder} onBlur={blurBorder}/>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+            <button type="submit" style={{ flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "var(--accent)", color: "#1a1208", border: "none", cursor: "pointer", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)" }}>Add company</button>
+            <button type="button" onClick={onClose} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 13, background: "transparent", color: "var(--text-muted)", border: "1px solid var(--border)", cursor: "pointer" }}>Cancel</button>
+          </div>
+        </form>
+      </div>
+    </>
   );
 }
 
@@ -833,6 +933,8 @@ export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
   const [showNew, setShowNew] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [detail, setDetail] = useState<{ company: CompanyWithDue; addContact: boolean } | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [isPendingCreate, startCreate] = useTransition();
   const [isPendingImport, startImport] = useTransition();
   const [isPendingBulk, startBulk] = useTransition();
@@ -964,7 +1066,7 @@ export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
               <span style={{ color: "var(--text)" }}><span className="mono" style={{ color: "var(--accent)" }}>{selectedIds.size}</span> selected</span>
               <span style={{ width: 1, height: 14, background: "var(--border)" }}/>
               {filter === "deleted" ? (
-                <button onClick={() => { if (window.confirm(`Permanently delete ${selectedIds.size} companies?`)) bulkAction("permanentDelete"); }} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--red)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Delete permanently</button>
+                <button onClick={() => setConfirmBulkDelete(true)} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--red)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Delete permanently</button>
               ) : (
                 <>
                   <button onClick={() => bulkAction("archive")} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--text-muted)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Archive</button>
@@ -1039,6 +1141,8 @@ export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
                     selected={selectedIds.has(company.id)}
                     onSelect={handleSelect}
                     onOpenDetail={(c, add) => setDetail({ company: c, addContact: add })}
+                    onPermDelete={setConfirmDeleteId}
+                    onReEngage={(id) => startCreate(async () => { await reEngageCompany(id); router.refresh(); })}
                   />
                 ))
               )}
@@ -1055,21 +1159,107 @@ export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
           contacts={contactsByCompany[detail.company.id] ?? []}
           onClose={() => setDetail(null)}
           startAddContact={detail.addContact}
+          onPermDelete={(id) => { setDetail(null); setConfirmDeleteId(id); }}
         />
       )}
 
-      <Modal open={showNew} onClose={() => setShowNew(false)} title="New company">
-        <form action={(fd) => { startCreate(async () => { await createCompany(fd); setShowNew(false); router.refresh(); }); }} className="space-y-3">
-          <Input label="Company Name" name="name" required/>
-          <Input label="Company URL" name="url"/>
-          <Input label="Industry" name="industry"/>
-          <Textarea label="Reply Notes" name="reply_notes" rows={2}/>
-          <div className="flex gap-2 pt-1">
-            <Button type="submit" variant="primary" size="sm" disabled={isPendingCreate}>Create</Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => setShowNew(false)}>Cancel</Button>
+      {showNew && (
+        <AddCompanyModal
+          onClose={() => setShowNew(false)}
+          onAdd={(fd) => startCreate(async () => { await createCompany(fd); router.refresh(); })}
+        />
+      )}
+
+      {confirmDeleteId && (() => {
+        const co = companies.find((c) => c.id === confirmDeleteId);
+        return (
+          <>
+            <div onClick={() => setConfirmDeleteId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)", zIndex: 70, animation: "fade-in 0.18s" }}/>
+            <div style={{
+              position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+              width: "90vw", maxWidth: 420, background: "var(--surface)",
+              border: "1px solid var(--border-strong)", borderRadius: 14, padding: 24,
+              zIndex: 71, boxShadow: "0 24px 64px rgba(0,0,0,0.55)",
+              animation: "fade-in 0.15s",
+            }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 20 }}>
+                <div style={{
+                  width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+                  background: "color-mix(in oklch, var(--red, #f87171) 12%, transparent)",
+                  border: "1px solid color-mix(in oklch, var(--red, #f87171) 25%, transparent)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <Trash2 size={16} color="var(--red, #f87171)"/>
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)", marginBottom: 5 }}>Delete permanently?</div>
+                  <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.55 }}>
+                    <strong style={{ color: "var(--text)" }}>&ldquo;{co?.name}&rdquo;</strong> will be gone forever. This cannot be undone.
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => { startBulk(async () => { await deleteCompany(confirmDeleteId); router.refresh(); }); setConfirmDeleteId(null); }}
+                  style={{ flex: 1, padding: "9px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "var(--red, #f87171)", color: "#fff", border: "none", cursor: "pointer" }}
+                >
+                  Yes, delete forever
+                </button>
+                <button
+                  onClick={() => setConfirmDeleteId(null)}
+                  style={{ padding: "9px 18px", borderRadius: 8, fontSize: 13, background: "transparent", color: "var(--text-muted)", border: "1px solid var(--border)", cursor: "pointer" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
+      {confirmBulkDelete && (
+        <>
+          <div onClick={() => setConfirmBulkDelete(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)", zIndex: 70, animation: "fade-in 0.18s" }}/>
+          <div style={{
+            position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+            width: "90vw", maxWidth: 420, background: "var(--surface)",
+            border: "1px solid var(--border-strong)", borderRadius: 14, padding: 24,
+            zIndex: 71, boxShadow: "0 24px 64px rgba(0,0,0,0.55)",
+            animation: "fade-in 0.15s",
+          }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 20 }}>
+              <div style={{
+                width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+                background: "color-mix(in oklch, var(--red, #f87171) 12%, transparent)",
+                border: "1px solid color-mix(in oklch, var(--red, #f87171) 25%, transparent)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <Trash2 size={16} color="var(--red, #f87171)"/>
+              </div>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)", marginBottom: 5 }}>Delete {selectedIds.size} companies permanently?</div>
+                <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.55 }}>
+                  These {selectedIds.size} companies will be gone forever. This cannot be undone.
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={() => { startBulk(async () => { await bulkDeleteCompanies([...selectedIds]); router.refresh(); }); setConfirmBulkDelete(false); setSelectedIds(new Set()); }}
+                style={{ flex: 1, padding: "9px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "var(--red, #f87171)", color: "#fff", border: "none", cursor: "pointer" }}
+              >
+                Yes, delete forever
+              </button>
+              <button
+                onClick={() => setConfirmBulkDelete(false)}
+                style={{ padding: "9px 18px", borderRadius: 8, fontSize: 13, background: "transparent", color: "var(--text-muted)", border: "1px solid var(--border)", cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
-        </form>
-      </Modal>
+        </>
+      )}
     </>
   );
 }

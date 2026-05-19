@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createServerClient } from "@/lib/supabase/server";
+import { todayStr } from "@/lib/date";
 import { z } from "zod";
 import { dbErr } from "@/server/db-error";
 
@@ -74,7 +75,13 @@ export async function updateCompanyField(id: string, field: string, value: strin
 
 export async function archiveCompany(id: string) {
   const db = createServerClient();
-  const { error } = await db.from("companies").update({ archived: true }).eq("id", id);
+  const today = todayStr();
+  const { data } = await db.from("companies").select("follow_up_3_date").eq("id", id).single();
+  const wasCycled = !!data?.follow_up_3_date;
+  const update = wasCycled
+    ? { soft_deleted: true }
+    : { archived: true, follow_up_3_date: today };
+  const { error } = await db.from("companies").update(update).eq("id", id);
   if (error) return dbErr(error);
 
   revalidatePath("/email-outreach");
@@ -84,6 +91,22 @@ export async function archiveCompany(id: string) {
 export async function unarchiveCompany(id: string) {
   const db = createServerClient();
   const { error } = await db.from("companies").update({ archived: false }).eq("id", id);
+  if (error) return dbErr(error);
+
+  revalidatePath("/email-outreach");
+  return { success: true };
+}
+
+export async function reEngageCompany(id: string) {
+  const db = createServerClient();
+  const { error } = await db.from("companies").update({
+    archived: false,
+    outreach_date: null,
+    follow_up_date: null,
+    follow_up_2_date: null,
+    status: "Not Started" as const,
+    reply_notes: null,
+  }).eq("id", id);
   if (error) return dbErr(error);
 
   revalidatePath("/email-outreach");

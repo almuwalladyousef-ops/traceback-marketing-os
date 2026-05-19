@@ -10,10 +10,11 @@ import {
   importPersonalLeads,
 } from "@/server/actions/personal";
 import type { PersonalLead } from "@/lib/supabase/types";
+import { addDaysStr } from "@/lib/date";
 import { getBrowserClient } from "@/lib/supabase/browser";
 import { MobileActionsPortal, MobileMoreMenu } from "@/components/shell/MobileActionsPortal";
 
-type Lead = PersonalLead & { due: boolean };
+type Lead = PersonalLead & { due: boolean; dueArchive: boolean };
 
 function fmtDate(d: string | null) {
   if (!d) return "";
@@ -67,35 +68,31 @@ function PInlineEdit({ value, onSave, placeholder, textStyle }: {
 }
 
 /* ─── Date contacted cell ──────────────────────────────────────────── */
-function DateContactedCell({ date, onSave }: { date: string | null; onSave: (v: string) => void }) {
+function DateContactedCell({ date, today, onSave }: { date: string | null; today: string; onSave: (v: string | null) => void }) {
+  const filled = !!date;
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-      <div style={{ position: "relative", width: 22, height: 22 }}>
-        <div style={{
+      <button
+        onClick={() => onSave(filled ? null : today)}
+        style={{
           width: 22, height: 22, borderRadius: 6,
-          background: date ? "var(--accent)" : "transparent",
-          border: "1px solid " + (date ? "var(--accent)" : "var(--border-strong)"),
+          background: filled ? "var(--accent)" : "transparent",
+          border: "1px solid " + (filled ? "var(--accent)" : "var(--border-strong)"),
           display: "flex", alignItems: "center", justifyContent: "center",
-          color: "#1a1208", pointerEvents: "none",
-          boxShadow: date ? "0 0 0 3px var(--accent-dim)" : "none",
+          color: "#1a1208", cursor: "pointer",
+          boxShadow: filled ? "0 0 0 3px var(--accent-dim)" : "none",
           transition: "all 0.15s",
-        }}>
-          {date && (
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="20 6 9 17 4 12"/>
-            </svg>
-          )}
-        </div>
-        <input
-          type="date"
-          value={date || ""}
-          onChange={(e) => onSave(e.target.value)}
-          style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", width: "100%", height: "100%", zIndex: 2 }}
-        />
-      </div>
-      {date && (
-        <div style={{ position: "relative", display: "inline-block" }}>
-          <div className="mono" style={{ fontSize: 10.5, color: "var(--text-muted)", padding: "1px 2px", userSelect: "none" }}>{fmtDate(date)}</div>
+        }}
+      >
+        {filled && (
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 6 9 17l-5-5"/>
+          </svg>
+        )}
+      </button>
+      {filled && date && (
+        <div style={{ position: "relative", display: "inline-block", marginTop: 2 }}>
+          <div className="mono" style={{ fontSize: 10.5, color: "var(--text-muted)", padding: "1px 3px", userSelect: "none" }}>{fmtDate(date)}</div>
           <input type="date" value={date} onChange={(e) => onSave(e.target.value)}
             style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", width: "100%", height: "100%", zIndex: 2 }}/>
         </div>
@@ -109,13 +106,6 @@ function FollowUpCell({ date, today, onSave }: { date: string | null; today: str
   const due = isDueDate(date, today);
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-      {due && (
-        <span style={{
-          fontSize: 9.5, fontWeight: 600, padding: "1px 6px", borderRadius: 4,
-          background: "var(--accent-dim)", color: "var(--accent)",
-          textTransform: "uppercase", letterSpacing: "0.06em",
-        }}>Due</span>
-      )}
       <div style={{ position: "relative", display: "inline-block" }}>
         <div className="mono" style={{
           fontSize: 11.5, padding: "2px 7px", borderRadius: 5,
@@ -159,6 +149,7 @@ function LeadRow({ lead, num, selected, today, onSelect, onUpdate, onDelete, onP
       alignItems: "center", padding: "12px 14px",
       borderTop: "1px solid var(--border)",
       background: selected ? "color-mix(in oklch, var(--accent) 8%, transparent)" : "transparent",
+      borderLeft: (lead.dueArchive && !isDimmed) ? "2px solid var(--red)" : (lead.due && !isDimmed) ? "2px solid var(--accent)" : "2px solid transparent",
       opacity: isDimmed ? 0.55 : 1, minHeight: 64,
       transition: "background 0.12s",
     }}>
@@ -199,7 +190,7 @@ function LeadRow({ lead, num, selected, today, onSelect, onUpdate, onDelete, onP
       </div>
 
       <div style={{ display: "flex", justifyContent: "center" }}>
-        <DateContactedCell date={lead.date_contacted} onSave={(v) => onUpdate(lead.id, "date_contacted", v)}/>
+        <DateContactedCell date={lead.date_contacted} today={today} onSave={(v) => onUpdate(lead.id, "date_contacted", v)}/>
       </div>
 
       <FollowUpCell date={lead.follow_up_date} today={today} onSave={(v) => onUpdate(lead.id, "follow_up_date", v)}/>
@@ -333,8 +324,8 @@ function PersonalStats({ leads, today }: { leads: Lead[]; today: string }) {
       overflow: "hidden", marginBottom: 18,
     }}>
       {[
-        { label: "Active leads", value: active, color: "var(--text)", note: "in pipeline" },
         { label: "Due", value: due, color: "var(--accent)", note: "follow-ups overdue" },
+        { label: "Active leads", value: active, color: "var(--text)", note: "in pipeline" },
         { label: "Contacted", value: contacted, color: "var(--green)", note: "of active leads" },
         { label: "Archived", value: archived, color: "var(--text-muted)", note: "completed / closed" },
       ].map((s, i) => (
@@ -386,7 +377,7 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
   const SORT_CYCLE: Record<string, "newest" | "oldest" | "az"> = { newest: "oldest", oldest: "az", az: "newest" };
 
   function updateLocal(id: string, field: string, value: string | null) {
-    setLeads((ls) => ls.map((l) => l.id === id ? { ...l, [field]: value, due: field === "follow_up_date" ? isDueDate(value, today) : l.due } as Lead : l));
+    setLeads((ls) => ls.map((l) => l.id === id ? { ...l, [field]: value, due: field === "follow_up_date" ? isDueDate(value, today) : l.due, dueArchive: field === "follow_up_date" ? (!!value && value <= addDaysStr(today, -3)) : l.dueArchive } as Lead : l));
     startTransition(async () => { await updatePersonalLeadField(id, field, value); });
   }
 
@@ -622,10 +613,37 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
         <AddLeadModal
           today={today}
           onClose={() => setShowAdd(false)}
-          onAdd={(fd) => startTransition(async () => {
-            fd.set("status", "Active");
-            await createPersonalLead(fd);
-          })}
+          onAdd={(fd) => {
+            const followUp = (fd.get("follow_up_date") as string) || null;
+            const tempLead: Lead = {
+              id: `temp-${Date.now()}`,
+              name: (fd.get("name") as string) || "",
+              handle_or_url: (fd.get("handle_or_url") as string) || null,
+              phone: (fd.get("phone") as string) || null,
+              email: (fd.get("email") as string) || null,
+              where_found: (fd.get("where_found") as string) || null,
+              date_found: null,
+              follow_up_date: followUp,
+              date_contacted: (fd.get("date_contacted") as string) || null,
+              notes: (fd.get("notes") as string) || null,
+              status: "Active",
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              due: isDueDate(followUp, today),
+              dueArchive: !!followUp && followUp <= addDaysStr(today, -3),
+            };
+            setLeads((ls) => [tempLead, ...ls]);
+            startTransition(async () => {
+              fd.set("status", "Active");
+              const result = await createPersonalLead(fd);
+              if (result && "error" in result) {
+                alert("Failed to add lead: " + result.error);
+                setLeads((ls) => ls.filter((l) => l.id !== tempLead.id));
+              } else {
+                router.refresh();
+              }
+            });
+          }}
         />
       )}
     </div>

@@ -1,5 +1,5 @@
 import { createServerClient } from "@/lib/supabase/server";
-import { todayStr } from "@/lib/date";
+import { todayStr, addDaysStr } from "@/lib/date";
 
 export async function getPersonalLeads() {
   const db = createServerClient();
@@ -11,11 +11,16 @@ export async function getPersonalLeads() {
   if (error) throw error;
 
   const today = todayStr();
+  const threeDaysAgo = addDaysStr(today, -3);
   return (data ?? []).map((p) => ({
     ...p,
     due:
       p.status === "Active" &&
       p.follow_up_date !== null &&
       p.follow_up_date <= today,
+    dueArchive:
+      p.status === "Active" &&
+      p.follow_up_date !== null &&
+      p.follow_up_date <= threeDaysAgo,
   }));
 }

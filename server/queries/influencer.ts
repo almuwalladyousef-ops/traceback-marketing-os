@@ -1,5 +1,5 @@
 import { createServerClient } from "@/lib/supabase/server";
-import { influencerDueTouch } from "@/lib/date";
+import { influencerDueTouch, influencerDueArchive } from "@/lib/date";
 import type { InfluencerStatus } from "@/lib/supabase/types";
 
 export async function getInfluencers(status: InfluencerStatus = "Active") {
@@ -21,5 +21,6 @@ export async function getInfluencers(status: InfluencerStatus = "Active") {
   return (data ?? []).map((i) => ({
     ...i,
     dueTouch: influencerDueTouch(i),
+    dueArchive: influencerDueArchive(i),
   }));
 }

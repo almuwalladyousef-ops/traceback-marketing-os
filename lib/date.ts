@@ -1,16 +1,21 @@
-import { addDays, format, startOfWeek, getDay, getDaysInMonth, startOfMonth } from "date-fns";
+import { addDays, format, startOfWeek, getDaysInMonth } from "date-fns";
 
 export function todayStr(): string {
   return format(new Date(), "yyyy-MM-dd");
 }
 
-export function isDue(dateStr: string | null): boolean {
-  if (!dateStr) return false;
-  return dateStr <= todayStr();
-}
-
 export function addDaysStr(dateStr: string, days: number): string {
   return format(addDays(new Date(dateStr), days), "yyyy-MM-dd");
+}
+
+export function influencerDueArchive(inf: {
+  touch_3: boolean;
+  touch_3_date: string | null;
+  status: string;
+}): boolean {
+  if (inf.status !== "Active" || !inf.touch_3 || !inf.touch_3_date) return false;
+  const today = todayStr();
+  return today >= addDaysStr(inf.touch_3_date, 3);
 }
 
 export function influencerDueTouch(inf: {
@@ -24,8 +29,6 @@ export function influencerDueTouch(inf: {
   archive_date: string | null;
 }): "touch_1" | "touch_2" | "touch_3" | "re_engage" | null {
   const today = todayStr();
-
-  if (!inf.touch_1) return "touch_1";
 
   if (inf.touch_1 && !inf.touch_2 && inf.touch_1_date) {
     const dueDate = addDaysStr(inf.touch_1_date, 2);
@@ -43,23 +46,6 @@ export function influencerDueTouch(inf: {
   }
 
   return null;
-}
-
-// Returns week-of-month (0-indexed) for a given date string
-export function weekOfMonth(dateStr: string): number {
-  const date = new Date(dateStr);
-  const firstDay = startOfMonth(date);
-  const firstMonday = startOfWeek(firstDay, { weekStartsOn: 1 });
-  const diff = Math.floor(
-    (date.getTime() - firstMonday.getTime()) / (7 * 24 * 60 * 60 * 1000)
-  );
-  return diff;
-}
-
-// Returns 0=Mon, 1=Tue, ... 6=Sun
-export function weekdayIndex(dateStr: string): number {
-  const d = getDay(new Date(dateStr)); // 0=Sun,1=Mon,...6=Sat
-  return d === 0 ? 6 : d - 1;
 }
 
 export function currentMonthDays(): string[] {
