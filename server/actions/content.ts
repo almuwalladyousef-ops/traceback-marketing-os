@@ -154,29 +154,3 @@ export async function hardDeleteAnalysisEntry(id: string) {
   return { success: true };
 }
 
-export async function bulkDeleteAnalysisEntries(ids: string[]) {
-  if (!ids.length) return { success: true };
-  const db = createServerClient();
-  const { error } = await db.from("content_analysis").update({ archived: true }).in("id", ids);
-  if (error) return dbErr(error);
-  revalidatePath("/content");
-  return { success: true };
-}
-
-export async function bulkRestoreAnalysisEntries(ids: string[]) {
-  if (!ids.length) return { success: true };
-  const db = createServerClient();
-  const { error } = await db.from("content_analysis").update({ archived: false }).in("id", ids);
-  if (error) return dbErr(error);
-  revalidatePath("/content");
-  return { success: true };
-}
-
-export async function bulkHardDeleteAnalysisEntries(ids: string[]) {
-  if (!ids.length) return { success: true };
-  const db = createServerClient();
-  const { error } = await db.from("content_analysis").delete().in("id", ids);
-  if (error) return dbErr(error);
-  revalidatePath("/content");
-  return { success: true };
-}

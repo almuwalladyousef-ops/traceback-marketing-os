@@ -44,15 +44,6 @@ export async function createContact(formData: FormData) {
   return { success: true };
 }
 
-export async function archiveContact(id: string) {
-  const db = createServerClient();
-  const { error } = await db.from("contacts").update({ archived: true }).eq("id", id);
-  if (error) return dbErr(error);
-
-  revalidatePath("/email-outreach");
-  return { success: true };
-}
-
 export async function updateContactField(id: string, field: string, value: string | null) {
   if (!ALLOWED_CONTACT_FIELDS.has(field)) return { error: "Invalid field" };
   const db = createServerClient();
