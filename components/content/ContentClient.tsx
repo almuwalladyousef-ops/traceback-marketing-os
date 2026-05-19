@@ -946,7 +946,13 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
   function restorePiece(id: string) {
     const piece = archivedPieces.find((p) => p.id === id);
     setArchivedPieces((ap) => ap.filter((p) => p.id !== id));
-    if (piece) setPieces((ps) => [{ ...piece, archived: false }, ...ps]);
+    if (piece) {
+      if (piece.user_archived) {
+        setUserArchivedPieces((ap) => [{ ...piece, archived: false }, ...ap]);
+      } else {
+        setPieces((ps) => [{ ...piece, archived: false }, ...ps]);
+      }
+    }
     startTransition(async () => {
       await updateContentPiece(id, { archived: false });
     });
@@ -1024,11 +1030,14 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
 
   function bulkRestoreDeleted() {
     const ids = Array.from(selectedDeletedIds);
-    const restoredPieces = archivedPieces.filter((p) => ids.includes(p.id)).map((p) => ({ ...p, archived: false }));
+    const toRestore = archivedPieces.filter((p) => ids.includes(p.id)).map((p) => ({ ...p, archived: false }));
+    const restoredToMain = toRestore.filter((p) => !p.user_archived);
+    const restoredToArchive = toRestore.filter((p) => p.user_archived);
     startBulk(async () => {
       await bulkRestoreContentPieces(ids);
       setArchivedPieces((ap) => ap.filter((p) => !ids.includes(p.id)));
-      setPieces((ps) => [...restoredPieces, ...ps]);
+      if (restoredToMain.length) setPieces((ps) => [...restoredToMain, ...ps]);
+      if (restoredToArchive.length) setUserArchivedPieces((ap) => [...restoredToArchive, ...ap]);
       setSelectedDeletedIds(new Set());
     });
   }
