@@ -140,6 +140,24 @@ export async function bulkArchiveCompanies(ids: string[]) {
   return { success: true };
 }
 
+export async function bulkUnarchiveCompanies(ids: string[]) {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("companies").update({ archived: false }).in("id", ids);
+  if (error) return dbErr(error);
+  revalidatePath("/email-outreach");
+  return { success: true };
+}
+
+export async function bulkRestoreCompanies(ids: string[]) {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("companies").update({ soft_deleted: false }).in("id", ids);
+  if (error) return dbErr(error);
+  revalidatePath("/email-outreach");
+  return { success: true };
+}
+
 export async function softDeleteCompany(id: string) {
   const db = createServerClient();
   const { error } = await db.from("companies").update({ soft_deleted: true }).eq("id", id);

@@ -75,6 +75,24 @@ export async function hardDeletePersonalLead(id: string) {
   return { success: true };
 }
 
+export async function bulkUpdatePersonalLeadStatus(ids: string[], status: "Active" | "Archived" | "Dead") {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("personal_leads").update({ status }).in("id", ids);
+  if (error) return dbErr(error);
+  revalidatePath("/personal-outreach");
+  return { success: true };
+}
+
+export async function bulkHardDeletePersonalLeads(ids: string[]) {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("personal_leads").delete().in("id", ids);
+  if (error) return dbErr(error);
+  revalidatePath("/personal-outreach");
+  return { success: true };
+}
+
 export async function updatePersonalLead(id: string, formData: FormData) {
   const raw = Object.fromEntries(formData.entries());
   const parsed = LeadSchema.parse({

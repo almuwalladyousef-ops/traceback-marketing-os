@@ -92,6 +92,7 @@ export interface ContentPiece {
   todo_schedule_post: boolean;
   todo_publish_post: boolean;
   archived: boolean;
+  user_archived: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -104,6 +105,7 @@ export interface ContentAnalysis {
   what_didnt: string | null;
   key_lesson: string | null;
   apply_to_next: string | null;
+  archived: boolean;
   created_at: string;
   updated_at: string;
   content_pieces?: Pick<ContentPiece, "id" | "title"> | null;

@@ -64,8 +64,8 @@ export function ContentCard({ inProgress, inProgressPieces, scheduledThisWeek, p
 
   return (
     <div className="card dash-card" style={{ padding: 22, gridColumn: "span 8", display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 18 }}>
-        <div>
+      <div className="content-card-header" style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
+        <div style={{ minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 }}>Content</div>
             <Link href="/content" className="btn-icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22 }}>
@@ -74,14 +74,14 @@ export function ContentCard({ inProgress, inProgressPieces, scheduledThisWeek, p
               </svg>
             </Link>
           </div>
-          <div style={{ display: "flex", gap: 28, marginTop: 10 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 20, marginTop: 10 }}>
             <Stat label="In progress" value={inProgress} color="var(--accent)"/>
             <Stat label="Published / mo" value={publishedThisMonth} color="var(--green)"/>
             <Stat label="Scheduled" value={scheduledCount} color="var(--text)"/>
             <Stat label="Avg cycle" value={avgCycleDays != null ? `${avgCycleDays}d` : "—"} color="var(--text-muted)" small/>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 0, padding: 2, background: "var(--surface-2)", borderRadius: 8, border: "1px solid var(--border)" }}>
+        <div style={{ display: "flex", gap: 0, padding: 2, background: "var(--surface-2)", borderRadius: 8, border: "1px solid var(--border)", flexShrink: 0 }}>
           {([["all","All"],["blogs","Blog"],["long_form","YouTube"],["short_form","Shorts"]] as [KindFilter, string][]).map(([k, l]) => (
             <button key={k} onClick={() => setFilter(k)} style={{
               padding: "5px 10px", fontSize: 11.5, borderRadius: 5,

@@ -259,6 +259,13 @@ input[type="date"]::-webkit-calendar-picker-indicator {
     grid-column: span 12 !important;
   }
 
+  /* Content card header: stack stats above filter pills */
+  .content-card-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+
   /* Stats grids: 2-column on mobile */
   .stats-grid {
     grid-template-columns: repeat(2, 1fr) !important;

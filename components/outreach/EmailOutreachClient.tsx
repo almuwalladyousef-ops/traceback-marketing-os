@@ -13,6 +13,8 @@ import {
   bulkSoftDeleteCompanies,
   bulkDeleteCompanies,
   bulkArchiveCompanies,
+  bulkUnarchiveCompanies,
+  bulkRestoreCompanies,
   createCompany,
   importCompanies,
 } from "@/server/actions/companies";
@@ -92,7 +94,7 @@ function StatsStrip({ companies }: { companies: CompanyWithDue[] }) {
     { label: "Due", value: dueToday, color: "var(--accent)", note: "outreach + bumps" },
     { label: "Active pipeline", value: active.length, color: "var(--text)", note: `${sent} contacted` },
     { label: "Replies", value: replied, color: "var(--green)", note: `${replyRate}% reply rate` },
-    { label: "This week sent", value: 23, color: "var(--text)", note: "+8 vs last week", spark: [3, 5, 4, 7, 6, 9, 8] },
+    { label: "This week sent", value: 0, color: "var(--text)", note: "emails this week", spark: [0, 0, 0, 0, 0, 0, 0] },
   ];
 
   return (
@@ -984,11 +986,13 @@ export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
     setSelectedIds((prev) => { const n = new Set(prev); checked ? n.add(id) : n.delete(id); return n; });
   }
 
-  function bulkAction(action: "softDelete" | "permanentDelete" | "archive") {
+  function bulkAction(action: "softDelete" | "permanentDelete" | "archive" | "unarchive" | "restore") {
     const ids = Array.from(selectedIds);
     startBulk(async () => {
       if (action === "softDelete") await bulkSoftDeleteCompanies(ids);
       else if (action === "permanentDelete") await bulkDeleteCompanies(ids);
+      else if (action === "restore") await bulkRestoreCompanies(ids);
+      else if (action === "unarchive") await bulkUnarchiveCompanies(ids);
       else await bulkArchiveCompanies(ids);
       setSelectedIds(new Set());
       router.refresh();
@@ -1066,7 +1070,15 @@ export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
               <span style={{ color: "var(--text)" }}><span className="mono" style={{ color: "var(--accent)" }}>{selectedIds.size}</span> selected</span>
               <span style={{ width: 1, height: 14, background: "var(--border)" }}/>
               {filter === "deleted" ? (
-                <button onClick={() => setConfirmBulkDelete(true)} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--red)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Delete permanently</button>
+                <>
+                  <button onClick={() => bulkAction("restore")} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--text-muted)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Recover</button>
+                  <button onClick={() => setConfirmBulkDelete(true)} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--red)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Delete permanently</button>
+                </>
+              ) : filter === "archived" ? (
+                <>
+                  <button onClick={() => bulkAction("unarchive")} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--text-muted)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Unarchive</button>
+                  <button onClick={() => bulkAction("softDelete")} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--red)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Delete</button>
+                </>
               ) : (
                 <>
                   <button onClick={() => bulkAction("archive")} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--text-muted)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Archive</button>

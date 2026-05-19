@@ -113,6 +113,42 @@ export async function restoreInfluencer(id: string) {
   return { success: true };
 }
 
+export async function bulkArchiveInfluencers(ids: string[]) {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("influencers").update({ status: "Archived" as const }).in("id", ids);
+  if (error) return dbErr(error);
+  revalidatePath("/influencer-outreach");
+  return { success: true };
+}
+
+export async function bulkSoftDeleteInfluencers(ids: string[]) {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("influencers").update({ status: "Deleted" as const }).in("id", ids);
+  if (error) return dbErr(error);
+  revalidatePath("/influencer-outreach");
+  return { success: true };
+}
+
+export async function bulkRestoreInfluencers(ids: string[]) {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("influencers").update({ status: "Active" as const }).in("id", ids);
+  if (error) return dbErr(error);
+  revalidatePath("/influencer-outreach");
+  return { success: true };
+}
+
+export async function bulkHardDeleteInfluencers(ids: string[]) {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("influencers").delete().in("id", ids);
+  if (error) return dbErr(error);
+  revalidatePath("/influencer-outreach");
+  return { success: true };
+}
+
 export async function reEngageInfluencer(id: string) {
   const db = createServerClient();
   const { error } = await db.from("influencers").update({

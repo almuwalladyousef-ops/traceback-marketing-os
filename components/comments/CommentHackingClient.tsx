@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { logComments } from "@/server/actions/comments";
+import { logComments, setCommentCount } from "@/server/actions/comments";
 import { getBrowserClient } from "@/lib/supabase/browser";
 import { format } from "date-fns";
 
@@ -251,6 +251,10 @@ export function CommentHackingClient({
   })();
 
   useEffect(() => {
+    setLogs(initialData);
+  }, [initialData]);
+
+  useEffect(() => {
     const client = getBrowserClient();
     const channel = client
       .channel("realtime:comment_logs")
@@ -270,10 +274,17 @@ export function CommentHackingClient({
     formData.set("count", String(n));
     startTransition(async () => {
       await logComments(formData);
-      setLogs((prev) => prev.map((d) => d.day === todayDay ? { ...d, count: n } : d));
+      setLogs((prev) => {
+        const hasToday = prev.some((d) => d.day === todayDay);
+        if (hasToday) {
+          return prev.map((d) => d.day === todayDay ? { ...d, count: d.count + n } : d);
+        }
+        return [...prev, { date: today, day: todayDay, count: n }];
+      });
       setTodayLogged(true);
       if (!todayLogged) setStreak((s) => s + 1);
       setCountInput("");
+      router.refresh();
     });
   }
 
@@ -283,7 +294,7 @@ export function CommentHackingClient({
     const formData = new FormData();
     formData.set("count", String(count));
     formData.set("date", today.substring(0, 8) + String(day).padStart(2, "0"));
-    startTransition(async () => { await logComments(formData); });
+    startTransition(async () => { await setCommentCount(formData); });
   }
 
   return (

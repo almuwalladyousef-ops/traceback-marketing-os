@@ -6,7 +6,15 @@ import {
   createContentPieceAndReturn,
   updateContentPiece,
   deleteContentPiece,
+  hardDeleteContentPiece,
   createAnalysisEntry,
+  bulkRestoreContentPieces,
+  bulkHardDeleteContentPieces,
+  bulkUnarchiveContentPieces,
+  bulkSoftDeleteContentPieces,
+  deleteAnalysisEntry,
+  restoreAnalysisEntry,
+  hardDeleteAnalysisEntry,
 } from "@/server/actions/content";
 import { getBrowserClient } from "@/lib/supabase/browser";
 import { MobileActionsPortal } from "@/components/shell/MobileActionsPortal";
@@ -94,10 +102,12 @@ function TodoDots({ piece }: { piece: ContentPiece }) {
 
 // ─── KanbanCard ──────────────────────────────────────────────────────────
 
-function KanbanCard({ piece, today, onClick }: { piece: ContentPiece; today: string; onClick: (p: ContentPiece) => void }) {
+function KanbanCard({ piece, today, onClick, statusColor }: { piece: ContentPiece; today: string; onClick: (p: ContentPiece) => void; statusColor: string }) {
   const pub = fmtPubDate(piece.publish_date);
   const days = daysUntil(piece.publish_date, today);
   const isUrgent = days !== null && days <= 7 && days >= 0;
+  const borderColor = `color-mix(in oklch, ${statusColor} 35%, var(--border))`;
+  const borderHover = `color-mix(in oklch, ${statusColor} 65%, var(--border))`;
   return (
     <div
       onClick={() => onClick(piece)}
@@ -105,11 +115,11 @@ function KanbanCard({ piece, today, onClick }: { piece: ContentPiece; today: str
       style={{
         padding: "12px 13px", cursor: "pointer",
         background: "var(--surface-2)",
-        border: "1px solid var(--border)",
+        border: `1px solid ${borderColor}`,
         marginBottom: 6, transition: "border-color 0.12s, transform 0.12s",
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border-strong)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.transform = "none"; }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = borderHover; e.currentTarget.style.transform = "translateY(-1px)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = borderColor; e.currentTarget.style.transform = "none"; }}
     >
       <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text)", lineHeight: 1.4, marginBottom: 8 }}>{piece.title}</div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -170,7 +180,7 @@ function KanbanBoard({ pieces, today, onOpen, onAddCard }: {
             </div>
             <div style={{ flex: 1 }}>
               {cols.map((p) => (
-                <KanbanCard key={p.id} piece={p} today={today} onClick={onOpen}/>
+                <KanbanCard key={p.id} piece={p} today={today} onClick={onOpen} statusColor={m.color}/>
               ))}
             </div>
             <button onClick={() => onAddCard(status)} style={{
@@ -269,15 +279,19 @@ function SlideSection({ title, children }: { title: string; children: React.Reac
 
 // ─── PieceSlideOver ──────────────────────────────────────────────────────
 
-function PieceSlideOver({ piece, onClose, onUpdate, onDelete, onMoveStatus, onAnalyze }: {
+function PieceSlideOver({ piece, analyses, onClose, onUpdate, onDelete, onMoveStatus, onAnalyze, onDeleteAnalysis, onArchive }: {
   piece: ContentPiece;
+  analyses: AnalysisWithPiece[];
   onClose: () => void;
   onUpdate: (id: string, key: string, value: unknown) => void;
   onDelete: (id: string) => void;
   onMoveStatus: (id: string, status: ContentStatus) => void;
   onAnalyze: (entry: AnalysisWithPiece) => void;
+  onDeleteAnalysis: (id: string) => void;
+  onArchive: (id: string) => void;
 }) {
   const [showAnalyze, setShowAnalyze] = useState(false);
+  const [viewingAnalysis, setViewingAnalysis] = useState<AnalysisWithPiece | null>(null);
   const statusIdx = STATUSES.indexOf(piece.status);
   const prevStatus = statusIdx > 0 ? STATUSES[statusIdx - 1] : null;
   const nextStatus = statusIdx < STATUSES.length - 1 ? STATUSES[statusIdx + 1] : null;
@@ -304,6 +318,16 @@ function PieceSlideOver({ piece, onClose, onUpdate, onDelete, onMoveStatus, onAn
               <span style={{ fontSize: 11.5, color: "var(--text-dim)" }}>{KIND_LABELS[piece.kind]} · {piece.scope}</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {piece.status === "Published" && !piece.user_archived && (
+                <button
+                  onClick={() => onArchive(piece.id)}
+                  className="btn-icon"
+                  title="Archive"
+                  style={{ color: "var(--yellow)" }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>
+                </button>
+              )}
               <button onClick={() => onDelete(piece.id)} className="btn-icon" title="Delete" style={{ color: "var(--text-dim)" }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M5 6l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"/></svg>
               </button>
@@ -324,7 +348,7 @@ function PieceSlideOver({ piece, onClose, onUpdate, onDelete, onMoveStatus, onAn
         {/* Body */}
         <div style={{ flex: 1, overflowY: "auto", padding: "18px 22px" }}>
 
-          {/* Analyze button for published */}
+          {/* Analyze button — only for published pieces */}
           {piece.status === "Published" && (
             <button
               onClick={() => setShowAnalyze(true)}
@@ -459,8 +483,91 @@ function PieceSlideOver({ piece, onClose, onUpdate, onDelete, onMoveStatus, onAn
               </a>
             )}
           </SlideSection>
+
+          {/* Analysis section — only for published pieces */}
+          {piece.status === "Published" && <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 }}>
+                Post-mortem Analysis {analyses.length > 0 && <span style={{ color: "var(--purple)", marginLeft: 4 }}>{analyses.length}</span>}
+              </div>
+              <button
+                onClick={() => setShowAnalyze(true)}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 5,
+                  padding: "4px 10px", borderRadius: 6, fontSize: 11.5, fontWeight: 500,
+                  background: "color-mix(in oklch, var(--purple) 12%, transparent)",
+                  color: "var(--purple)",
+                  border: "1px solid color-mix(in oklch, var(--purple) 30%, transparent)",
+                  cursor: "pointer",
+                }}
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                Add analysis
+              </button>
+            </div>
+
+            {analyses.length === 0 ? (
+              <div style={{ padding: "20px 14px", textAlign: "center", color: "var(--text-dim)", fontSize: 12, border: "1px dashed var(--border)", borderRadius: 8 }}>
+                No analysis yet — click Add analysis to post-mortem this piece
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {analyses.map((a) => (
+                  <div key={a.id} style={{ padding: "12px 14px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 9 }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
+                      <div className="mono" style={{ fontSize: 10.5, color: "var(--text-dim)" }}>
+                        {new Date(a.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      </div>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <button onClick={() => setViewingAnalysis(a)} className="btn-icon" style={{ width: 22, height: 22 }} title="View full">
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                        </button>
+                        <button onClick={() => onDeleteAnalysis(a.id)} className="btn-icon" style={{ width: 22, height: 22, color: "var(--text-dim)" }} title="Delete">
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M5 6l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      {([["✓ What worked", a.what_worked], ["✗ What didn't", a.what_didnt], ["💡 Key lesson", a.key_lesson], ["→ Apply next", a.apply_to_next]] as [string, string | null][]).map(([l, v]) => v ? (
+                        <div key={l}>
+                          <div style={{ fontSize: 9.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 600, marginBottom: 3 }}>{l}</div>
+                          <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.45, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }}>{v}</div>
+                        </div>
+                      ) : null)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>}
         </div>
       </div>
+
+      {/* Analysis full-view modal */}
+      {viewingAnalysis && (
+        <>
+          <div onClick={() => setViewingAnalysis(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)", zIndex: 62 }}/>
+          <div style={{
+            position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+            width: "90vw", maxWidth: 520, background: "var(--surface)", border: "1px solid var(--border-strong)",
+            borderRadius: 14, padding: 24, zIndex: 63, boxShadow: "0 24px 64px rgba(0,0,0,0.5)",
+            maxHeight: "80vh", overflowY: "auto",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{piece.title}</div>
+              <button onClick={() => setViewingAnalysis(null)} className="btn-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+            {([["What worked", viewingAnalysis.what_worked], ["What didn't", viewingAnalysis.what_didnt], ["Key lesson", viewingAnalysis.key_lesson], ["Apply to next", viewingAnalysis.apply_to_next]] as [string, string | null][]).map(([l, v]) => (
+              <div key={l} style={{ marginBottom: 14, padding: "12px 14px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8 }}>
+                <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600, marginBottom: 6 }}>{l}</div>
+                <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.6 }}>{v ?? "—"}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {showAnalyze && (
         <AnalyzeModal
@@ -620,160 +727,6 @@ Keep each answer to 2-3 sentences max.`;
   );
 }
 
-// ─── AnalysisTab ─────────────────────────────────────────────────────────
-
-function AnalysisTab({ entries, pieces, onAdd, onOpenPiece, showAddExternal, onCloseExternal }: {
-  entries: AnalysisWithPiece[];
-  pieces: ContentPiece[];
-  onAdd: (e: AnalysisWithPiece) => void;
-  onOpenPiece: (p: ContentPiece) => void;
-  showAddExternal?: boolean;
-  onCloseExternal?: () => void;
-}) {
-  const [showAddLocal, setShowAddLocal] = useState(false);
-  const showAdd = showAddLocal || !!showAddExternal;
-  function closeAdd() { setShowAddLocal(false); onCloseExternal?.(); }
-  const [selected, setSelected] = useState<AnalysisWithPiece | null>(null);
-  const [form, setForm] = useState({ content_piece_id: "", what_worked: "", what_didnt: "", key_lesson: "", apply_to_next: "" });
-  const [, startTransition] = useTransition();
-
-  function submit(e: React.FormEvent) {
-    e.preventDefault();
-    const piece = pieces.find((p) => p.id === form.content_piece_id);
-    if (!piece) return;
-    startTransition(async () => {
-      const res = await createAnalysisEntry({
-        scope: piece.scope,
-        content_piece_id: form.content_piece_id || null,
-        what_worked: form.what_worked,
-        what_didnt: form.what_didnt,
-        key_lesson: form.key_lesson,
-        apply_to_next: form.apply_to_next,
-      });
-      if ("data" in res) {
-        onAdd({ ...res.data, content_pieces: { id: piece.id, title: piece.title } });
-      }
-    });
-    closeAdd();
-    setForm({ content_piece_id: "", what_worked: "", what_didnt: "", key_lesson: "", apply_to_next: "" });
-  }
-
-  const inp: React.CSSProperties = { width: "100%", padding: "6px 9px", borderRadius: 6, background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontSize: 12.5, fontFamily: "inherit", outline: "none", resize: "none" as const };
-
-  return (
-    <div>
-      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{
-          display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr 1fr",
-          padding: "9px 14px", background: "var(--surface-2)",
-          borderBottom: "1px solid var(--border)",
-          fontSize: 10.5, color: "var(--text-muted)", fontWeight: 600,
-          textTransform: "uppercase", letterSpacing: "0.08em",
-        }}>
-          {["Content piece", "What worked", "What didn't", "Key lesson", "Apply to next"].map((h) => <div key={h}>{h}</div>)}
-        </div>
-        {entries.length === 0 && (
-          <div style={{ padding: "48px 24px", textAlign: "center", color: "var(--text-dim)", fontSize: 13 }}>No analysis entries yet</div>
-        )}
-        {entries.map((e) => (
-          <div key={e.id} onClick={() => setSelected(e)} className="row-hover" style={{
-            display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr 1fr",
-            padding: "12px 14px", borderTop: "1px solid var(--border)",
-            cursor: "pointer", alignItems: "start",
-          }}>
-            <div style={{ paddingRight: 12 }}>
-              <button
-                onClick={(ev) => { ev.stopPropagation(); const p = pieces.find((x) => x.id === e.content_piece_id); if (p) onOpenPiece(p); }}
-                style={{ background: "transparent", border: "none", padding: 0, textAlign: "left", cursor: "pointer" }}
-              >
-                <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>{e.content_pieces?.title ?? "—"}</div>
-                <div style={{ fontSize: 10.5, color: "var(--accent)", marginTop: 2, display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  View piece
-                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/></svg>
-                </div>
-              </button>
-            </div>
-            {[e.what_worked, e.what_didnt, e.key_lesson, e.apply_to_next].map((v, j) => (
-              <div key={j} style={{ fontSize: 12, color: "var(--text-muted)", paddingRight: 12, lineHeight: 1.4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }}>{v ?? "—"}</div>
-            ))}
-          </div>
-        ))}
-      </div>
-
-      {/* Add modal */}
-      {showAdd && (
-        <>
-          <div onClick={closeAdd} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)", zIndex: 60, animation: "fade-in 0.2s" }}/>
-          <div style={{
-            position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
-            width: "90vw", maxWidth: 500, background: "var(--surface)", border: "1px solid var(--border-strong)",
-            borderRadius: 14, padding: 24, zIndex: 61, boxShadow: "0 24px 64px rgba(0,0,0,0.5)",
-            animation: "fade-in 0.18s",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-              <div style={{ fontSize: 15, fontWeight: 600 }}>New analysis entry</div>
-              <button onClick={closeAdd} className="btn-icon">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-              </button>
-            </div>
-            <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div>
-                <div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>Content piece</div>
-                <select
-                  value={form.content_piece_id}
-                  onChange={(e) => setForm((f) => ({ ...f, content_piece_id: e.target.value }))}
-                  style={{ ...inp }}
-                >
-                  <option value="">— Select piece —</option>
-                  {pieces.filter((p) => p.status === "Published").map((p) => (
-                    <option key={p.id} value={p.id}>{p.title}</option>
-                  ))}
-                </select>
-              </div>
-              {([["what_worked","What worked"],["what_didnt","What didn't work"],["key_lesson","Key lesson"],["apply_to_next","Apply to next"]] as [keyof typeof form, string][]).map(([k, l]) => (
-                <div key={k}>
-                  <div style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>{l}</div>
-                  <textarea style={inp} rows={2} value={form[k]} onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))}/>
-                </div>
-              ))}
-              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                <button type="submit" style={{ flex: 1, padding: "8px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "var(--accent)", color: "#1a1208", border: "none", cursor: "pointer" }}>Add entry</button>
-                <button type="button" onClick={closeAdd} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 13, background: "transparent", color: "var(--text-muted)", border: "1px solid var(--border)", cursor: "pointer" }}>Cancel</button>
-              </div>
-            </form>
-          </div>
-        </>
-      )}
-
-      {/* View modal */}
-      {selected && (
-        <>
-          <div onClick={() => setSelected(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)", zIndex: 60 }}/>
-          <div style={{
-            position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
-            width: "90vw", maxWidth: 520, background: "var(--surface)", border: "1px solid var(--border-strong)",
-            borderRadius: 14, padding: 24, zIndex: 61, boxShadow: "0 24px 64px rgba(0,0,0,0.5)",
-            maxHeight: "80vh", overflowY: "auto",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{selected.content_pieces?.title ?? "—"}</div>
-              <button onClick={() => setSelected(null)} className="btn-icon">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-              </button>
-            </div>
-            {([["What worked", selected.what_worked], ["What didn't", selected.what_didnt], ["Key lesson", selected.key_lesson], ["Apply to next", selected.apply_to_next]] as [string, string | null][]).map(([l, v]) => (
-              <div key={l} style={{ marginBottom: 14, padding: "12px 14px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8 }}>
-                <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600, marginBottom: 6 }}>{l}</div>
-                <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.6 }}>{v ?? "—"}</div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 // ─── NewPieceModal ───────────────────────────────────────────────────────
 
 function NewPieceModal({ onClose, onAdd, scope, kind, defaultStatus }: {
@@ -897,44 +850,61 @@ function ContentStats({ pieces, today }: { pieces: ContentPiece[]; today: string
 interface Props {
   pieces: ContentPiece[];
   analysis: AnalysisWithPiece[];
+  deletedAnalysis: AnalysisWithPiece[];
+  archivedPieces: ContentPiece[];
+  userArchivedPieces: ContentPiece[];
   today: string;
 }
 
-export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis, today }: Props) {
+export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis, deletedAnalysis: initialDeletedAnalysis, archivedPieces: initialArchivedPieces, userArchivedPieces: initialUserArchivedPieces, today }: Props) {
   const [pieces, setPieces] = useState<ContentPiece[]>(initialPieces);
   const [analysis, setAnalysis] = useState<AnalysisWithPiece[]>(initialAnalysis);
+  const [deletedAnalysis, setDeletedAnalysis] = useState<AnalysisWithPiece[]>(initialDeletedAnalysis);
+  const [archivedPieces, setArchivedPieces] = useState<ContentPiece[]>(initialArchivedPieces);
+  const [userArchivedPieces, setUserArchivedPieces] = useState<ContentPiece[]>(initialUserArchivedPieces);
   const [scope, setScope] = useState<ContentScope>(() => {
     if (typeof window === "undefined") return "traceback";
     return (localStorage.getItem("content_scope") as ContentScope) ?? "traceback";
   });
-  const [kind, setKind] = useState<ContentKind | "analysis" | "deleted">(() => {
+  const [kind, setKind] = useState<ContentKind | "archived" | "deleted">(() => {
     if (typeof window === "undefined") return "short_form";
-    return (localStorage.getItem("content_kind") as ContentKind | "analysis" | "deleted") ?? "short_form";
+    const stored = localStorage.getItem("content_kind");
+    if (stored === "analysis") return "short_form";
+    return (stored as ContentKind | "archived" | "deleted") ?? "short_form";
   });
   const [view, setView] = useState<"board" | "list">("board");
   const [selectedPiece, setSelectedPiece] = useState<ContentPiece | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [newDefaultStatus, setNewDefaultStatus] = useState<ContentStatus>("Idea");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [showAddAnalysis, setShowAddAnalysis] = useState(false);
+  const [selectedDeletedIds, setSelectedDeletedIds] = useState<Set<string>>(new Set());
+  const [confirmBulkDeleteContent, setConfirmBulkDeleteContent] = useState(false);
+  const [selectedArchivedIds, setSelectedArchivedIds] = useState<Set<string>>(new Set());
+  const [isPendingBulk, startBulk] = useTransition();
   const [, startTransition] = useTransition();
 
-  const isAnalysis = kind === "analysis";
   const isDeleted = kind === "deleted";
+  const isArchived = kind === "archived";
+  const isSpecialTab = isDeleted || isArchived;
 
   const filtered = useMemo(
-    () => pieces.filter((p) => p.scope === scope && p.kind === kind && p.status !== "Deleted"),
-    [pieces, scope, kind]
+    () => isSpecialTab ? [] : pieces.filter((p) => p.scope === scope && p.kind === (kind as ContentKind)),
+    [pieces, scope, kind, isSpecialTab]
   );
 
-  const filteredAnalysis = useMemo(
-    () => analysis.filter((a) => a.scope === scope),
-    [analysis, scope]
+  const userArchivedForScope = useMemo(
+    () => userArchivedPieces.filter((p) => p.scope === scope),
+    [userArchivedPieces, scope]
   );
 
   const deletedPieces = useMemo(
-    () => pieces.filter((p) => p.scope === scope && p.status === "Deleted"),
-    [pieces, scope]
+    () => archivedPieces.filter((p) => p.scope === scope),
+    [archivedPieces, scope]
+  );
+
+  const deletedAnalysisForScope = useMemo(
+    () => deletedAnalysis.filter((a) => a.scope === scope),
+    [deletedAnalysis, scope]
   );
 
   // Realtime sync
@@ -955,6 +925,7 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
 
   function updatePiece(id: string, key: string, value: unknown) {
     setPieces((ps) => ps.map((p) => p.id === id ? { ...p, [key]: value } : p));
+    setUserArchivedPieces((ap) => ap.map((p) => p.id === id ? { ...p, [key]: value } : p));
     setSelectedPiece((s) => s && s.id === id ? { ...s, [key]: value } as ContentPiece : s);
     startTransition(async () => {
       await updateContentPiece(id, { [key]: value });
@@ -962,24 +933,71 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
   }
 
   function removePiece(id: string) {
-    setPieces((ps) => ps.map((p) => p.id === id ? { ...p, status: "Deleted" as ContentStatus } : p));
+    const piece = pieces.find((p) => p.id === id) ?? userArchivedPieces.find((p) => p.id === id);
+    setPieces((ps) => ps.filter((p) => p.id !== id));
+    setUserArchivedPieces((ap) => ap.filter((p) => p.id !== id));
+    if (piece) setArchivedPieces((ap) => [{ ...piece, archived: true }, ...ap]);
     setSelectedPiece(null);
     startTransition(async () => {
-      await updateContentPiece(id, { status: "Deleted" });
+      await deleteContentPiece(id);
     });
   }
 
   function restorePiece(id: string) {
-    setPieces((ps) => ps.map((p) => p.id === id ? { ...p, status: "Idea" as ContentStatus } : p));
+    const piece = archivedPieces.find((p) => p.id === id);
+    setArchivedPieces((ap) => ap.filter((p) => p.id !== id));
+    if (piece) setPieces((ps) => [{ ...piece, archived: false }, ...ps]);
     startTransition(async () => {
-      await updateContentPiece(id, { status: "Idea" });
+      await updateContentPiece(id, { archived: false });
     });
   }
 
   function permanentlyDeletePiece(id: string) {
-    setPieces((ps) => ps.filter((p) => p.id !== id));
+    setArchivedPieces((ap) => ap.filter((p) => p.id !== id));
+    setUserArchivedPieces((ap) => ap.filter((p) => p.id !== id));
     startTransition(async () => {
-      await deleteContentPiece(id);
+      await hardDeleteContentPiece(id);
+    });
+  }
+
+  function bulkUnarchiveSelected() {
+    const ids = Array.from(selectedArchivedIds);
+    const restored = userArchivedPieces.filter((p) => ids.includes(p.id)).map((p) => ({ ...p, user_archived: false }));
+    startBulk(async () => {
+      await bulkUnarchiveContentPieces(ids);
+      setUserArchivedPieces((ap) => ap.filter((p) => !ids.includes(p.id)));
+      setPieces((ps) => [...restored, ...ps]);
+      setSelectedArchivedIds(new Set());
+    });
+  }
+
+  function bulkDeleteFromArchived() {
+    const ids = Array.from(selectedArchivedIds);
+    const moved = userArchivedPieces.filter((p) => ids.includes(p.id)).map((p) => ({ ...p, archived: true }));
+    startBulk(async () => {
+      await bulkSoftDeleteContentPieces(ids);
+      setUserArchivedPieces((ap) => ap.filter((p) => !ids.includes(p.id)));
+      setArchivedPieces((ap) => [...moved, ...ap]);
+      setSelectedArchivedIds(new Set());
+    });
+  }
+
+  function archivePiece(id: string) {
+    const piece = pieces.find((p) => p.id === id);
+    setPieces((ps) => ps.filter((p) => p.id !== id));
+    if (piece) setUserArchivedPieces((ap) => [{ ...piece, user_archived: true }, ...ap]);
+    setSelectedPiece(null);
+    startTransition(async () => {
+      await updateContentPiece(id, { user_archived: true });
+    });
+  }
+
+  function unarchivePiece(id: string) {
+    const piece = userArchivedPieces.find((p) => p.id === id);
+    setUserArchivedPieces((ap) => ap.filter((p) => p.id !== id));
+    if (piece) setPieces((ps) => [{ ...piece, user_archived: false }, ...ps]);
+    startTransition(async () => {
+      await updateContentPiece(id, { user_archived: false });
     });
   }
 
@@ -997,18 +1015,42 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
     setShowNew(true);
   }
 
-  function openPieceFromAnalysis(p: ContentPiece) {
-    setScope(p.scope);
-    setKind(p.kind);
-    setSelectedPiece(p);
+  function handleDeleteAnalysis(id: string) {
+    const entry = analysis.find((a) => a.id === id);
+    setAnalysis((a) => a.filter((e) => e.id !== id));
+    if (entry) setDeletedAnalysis((a) => [{ ...entry, archived: true }, ...a]);
+    startTransition(async () => { await deleteAnalysisEntry(id); });
   }
 
-  const liveSelected = selectedPiece ? (pieces.find((p) => p.id === selectedPiece.id) ?? selectedPiece) : null;
+  function bulkRestoreDeleted() {
+    const ids = Array.from(selectedDeletedIds);
+    const restoredPieces = archivedPieces.filter((p) => ids.includes(p.id)).map((p) => ({ ...p, archived: false }));
+    startBulk(async () => {
+      await bulkRestoreContentPieces(ids);
+      setArchivedPieces((ap) => ap.filter((p) => !ids.includes(p.id)));
+      setPieces((ps) => [...restoredPieces, ...ps]);
+      setSelectedDeletedIds(new Set());
+    });
+  }
+
+  function bulkHardDeleteSelected() {
+    const ids = Array.from(selectedDeletedIds);
+    startBulk(async () => {
+      await bulkHardDeleteContentPieces(ids);
+      setArchivedPieces((ap) => ap.filter((p) => !ids.includes(p.id)));
+      setSelectedDeletedIds(new Set());
+      setConfirmBulkDeleteContent(false);
+    });
+  }
+
+  const liveSelected = selectedPiece
+    ? (pieces.find((p) => p.id === selectedPiece.id) ?? userArchivedPieces.find((p) => p.id === selectedPiece.id) ?? selectedPiece)
+    : null;
 
   return (
     <div className="fade-in">
-      {/* Mobile: View toggle + Analysis/Deleted nav + New piece button in TopBar */}
-      {!isAnalysis && !isDeleted && (
+      {/* Mobile: View toggle + New piece button in TopBar */}
+      {!isSpecialTab && (
         <MobileActionsPortal>
           <div style={{ display: "flex", gap: 2, padding: 2, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 7 }}>
             {([["board", "⊞"], ["list", "☰"]] as [string, string][]).map(([v, icon]) => (
@@ -1030,18 +1072,6 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
           </button>
         </MobileActionsPortal>
       )}
-      {/* Mobile: New entry button in TopBar when on Analysis tab */}
-      {isAnalysis && (
-        <MobileActionsPortal>
-          <button
-            onClick={() => setShowAddAnalysis(true)}
-            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8, background: "var(--accent)", color: "#1a1208", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)" }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            New entry
-          </button>
-        </MobileActionsPortal>
-      )}
 
       {/* Scope + view toggle row */}
       <div className="content-top-bar" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, padding: "14px 18px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12 }}>
@@ -1060,69 +1090,65 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
             ))}
           </div>
         </div>
-        {!isDeleted && (
+        {!isSpecialTab && (
           <div className="page-actions" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {!isAnalysis && (
-              <div style={{ display: "flex", gap: 2, padding: 2, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 7 }}>
-                {([["board", "⊞"], ["list", "☰"]] as [string, string][]).map(([v, icon]) => (
-                  <button key={v} onClick={() => setView(v as "board" | "list")} style={{
-                    width: 28, height: 28, borderRadius: 5, fontSize: 14,
-                    background: view === v ? "var(--surface)" : "transparent",
-                    color: view === v ? "var(--text)" : "var(--text-muted)",
-                    border: "none", cursor: "pointer",
-                    boxShadow: view === v ? "inset 0 0 0 1px var(--border)" : "none",
-                  }}>{icon}</button>
-                ))}
-              </div>
-            )}
-            {isAnalysis ? (
-              <button onClick={() => setShowAddAnalysis(true)} style={{
-                display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px",
-                borderRadius: 8, background: "var(--accent)", color: "#1a1208",
-                border: "none", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)",
-              }}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
-                New entry
-              </button>
-            ) : (
-              <button onClick={() => { setNewDefaultStatus("Idea"); setShowNew(true); }} style={{
-                display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px",
-                borderRadius: 8, background: "var(--accent)", color: "#1a1208",
-                border: "none", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)",
-              }}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
-                New piece
-              </button>
-            )}
+            <div style={{ display: "flex", gap: 2, padding: 2, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 7 }}>
+              {([["board", "⊞"], ["list", "☰"]] as [string, string][]).map(([v, icon]) => (
+                <button key={v} onClick={() => setView(v as "board" | "list")} style={{
+                  width: 28, height: 28, borderRadius: 5, fontSize: 14,
+                  background: view === v ? "var(--surface)" : "transparent",
+                  color: view === v ? "var(--text)" : "var(--text-muted)",
+                  border: "none", cursor: "pointer",
+                  boxShadow: view === v ? "inset 0 0 0 1px var(--border)" : "none",
+                }}>{icon}</button>
+              ))}
+            </div>
+            <button onClick={() => { setNewDefaultStatus("Idea"); setShowNew(true); }} style={{
+              display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px",
+              borderRadius: 8, background: "var(--accent)", color: "#1a1208",
+              border: "none", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)",
+            }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              New piece
+            </button>
           </div>
         )}
       </div>
 
       {/* Kind tabs */}
       <div className="content-kind-tabs" style={{ display: "flex", alignItems: "center", gap: 4, padding: 3, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, marginBottom: 16 }}>
-        {([...KINDS, "analysis", "deleted"] as (ContentKind | "analysis" | "deleted")[]).map((k) => {
-          const label = k === "analysis" ? "Analysis" : k === "deleted" ? "Deleted" : KIND_LABELS[k as ContentKind];
+        {([...KINDS, "archived", "deleted"] as (ContentKind | "archived" | "deleted")[]).map((k) => {
+          const label = k === "deleted" ? "Deleted" : k === "archived" ? "Archived" : KIND_LABELS[k as ContentKind];
           const isActive = kind === k;
           const isDeletedTab = k === "deleted";
+          const isArchivedTab = k === "archived";
+          const deletedCount = deletedPieces.length + deletedAnalysisForScope.length;
+          const archivedCount = userArchivedForScope.length;
           return (
             <button key={k} onClick={() => { setKind(k); localStorage.setItem("content_kind", k); }} style={{
               flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
               padding: "6px 12px", borderRadius: 7, whiteSpace: "nowrap",
               background: isActive ? "var(--surface-2)" : "transparent",
-              color: isActive ? (isDeletedTab ? "var(--red, #f87171)" : "var(--text)") : "var(--text-muted)",
+              color: isActive ? (isDeletedTab ? "var(--red, #f87171)" : isArchivedTab ? "var(--yellow)" : "var(--text)") : "var(--text-muted)",
               border: "none", fontSize: 13, fontWeight: isActive ? 500 : 400,
               boxShadow: isActive ? "inset 0 0 0 1px var(--border), 0 1px 2px rgba(0,0,0,0.3)" : "none",
               cursor: "pointer", transition: "background 0.15s, color 0.15s",
             }}>
               {label}
-              {isDeletedTab && deletedPieces.length > 0 && (
+              {isDeletedTab && deletedCount > 0 && (
                 <span style={{
                   fontSize: 10, fontWeight: 600, padding: "1px 5px", borderRadius: 4,
                   background: "color-mix(in oklch, var(--red, #f87171) 15%, transparent)",
                   color: "var(--red, #f87171)",
-                }}>{deletedPieces.length}</span>
+                }}>{deletedCount}</span>
+              )}
+              {isArchivedTab && archivedCount > 0 && (
+                <span style={{
+                  fontSize: 10, fontWeight: 600, padding: "1px 5px", borderRadius: 4,
+                  background: "color-mix(in oklch, var(--yellow) 15%, transparent)",
+                  color: "var(--yellow)",
+                }}>{archivedCount}</span>
               )}
             </button>
           );
@@ -1132,63 +1158,158 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
       {/* Stats + main content — keyed to scope so it fades in on scope switch */}
       <div key={scope} className="fade-in">
       {/* Stats */}
-      {!isAnalysis && !isDeleted && <ContentStats pieces={filtered} today={today}/>}
+      {!isSpecialTab && <ContentStats pieces={filtered} today={today}/>}
 
       {/* Main content */}
-      {isDeleted ? (
+      {isArchived ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {userArchivedForScope.length === 0 ? (
+            <div style={{ padding: "60px 24px", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>No archived pieces — archive a published piece from its slide-over</div>
+          ) : (
+            <>
+              {/* Bulk toolbar */}
+              <div className={`page-toolbar${selectedArchivedIds.size > 0 ? " has-selection" : ""}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                {selectedArchivedIds.size > 0 ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "var(--surface-2)", border: "1px solid var(--accent-line)", borderRadius: 9, fontSize: 12.5 }}>
+                    <span style={{ color: "var(--text)" }}><span className="mono" style={{ color: "var(--accent)" }}>{selectedArchivedIds.size}</span> selected</span>
+                    <span style={{ width: 1, height: 14, background: "var(--border)" }}/>
+                    <button onClick={bulkUnarchiveSelected} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--text-muted)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Unarchive</button>
+                    <button onClick={bulkDeleteFromArchived} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--red, #f87171)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Delete</button>
+                    <div style={{ flex: 1 }}/>
+                    <button onClick={() => setSelectedArchivedIds(new Set())} className="btn-icon" style={{ width: 24, height: 24 }}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setSelectedArchivedIds(new Set(userArchivedForScope.map((p) => p.id)))}
+                    style={{ fontSize: 12, color: "var(--text-muted)", background: "transparent", border: "1px solid var(--border)", borderRadius: 7, padding: "5px 10px", cursor: "pointer" }}
+                  >Select all</button>
+                )}
+              </div>
+
+              {userArchivedForScope.map((p) => {
+                const isSelected = selectedArchivedIds.has(p.id);
+                return (
+                  <div key={p.id} onClick={() => setSelectedPiece(p)} className="row-hover" style={{
+                    display: "flex", alignItems: "center", gap: 12,
+                    padding: "12px 16px",
+                    background: isSelected ? "color-mix(in oklch, var(--accent) 8%, var(--surface))" : "var(--surface)",
+                    border: `1px solid ${isSelected ? "var(--accent-line)" : "var(--border)"}`,
+                    borderRadius: 10, cursor: "pointer",
+                  }}>
+                    <button onClick={(e) => { e.stopPropagation(); setSelectedArchivedIds((s) => { const n = new Set(s); isSelected ? n.delete(p.id) : n.add(p.id); return n; }); }} style={{
+                      width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+                      border: "1px solid " + (isSelected ? "var(--accent)" : "var(--border-strong)"),
+                      background: isSelected ? "var(--accent)" : "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      color: "#1a1208", cursor: "pointer",
+                    }}>
+                      {isSelected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>}
+                    </button>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 500, color: "var(--text)", marginBottom: 2 }}>{p.title}</div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{KIND_LABELS[p.kind]} · {p.scope}{p.publish_date ? ` · ${fmtPubDate(p.publish_date)}` : ""}</div>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); unarchivePiece(p.id); }}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 5,
+                        padding: "5px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500,
+                        background: "var(--surface-2)", color: "var(--text-muted)",
+                        border: "1px solid var(--border)", cursor: "pointer",
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
+                      Unarchive
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); removePiece(p.id); }}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 5,
+                        padding: "5px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500,
+                        background: "color-mix(in oklch, var(--red, #f87171) 10%, transparent)",
+                        color: "var(--red, #f87171)",
+                        border: "1px solid color-mix(in oklch, var(--red, #f87171) 25%, transparent)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M5 6l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"/></svg>
+                      Delete
+                    </button>
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+      ) : isDeleted ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {deletedPieces.length === 0 ? (
             <div style={{ padding: "60px 24px", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>No deleted pieces</div>
           ) : (
-            deletedPieces.map((p) => (
-              <div key={p.id} style={{
-                display: "flex", alignItems: "center", gap: 12,
-                padding: "12px 16px", background: "var(--surface)", border: "1px solid var(--border)",
-                borderRadius: 10,
-              }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 500, color: "var(--text)", marginBottom: 2 }}>{p.title}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{KIND_LABELS[p.kind]} · {p.scope}</div>
-                </div>
-                <button
-                  onClick={() => restorePiece(p.id)}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 5,
-                    padding: "5px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500,
-                    background: "var(--surface-2)", color: "var(--text-muted)",
-                    border: "1px solid var(--border)", cursor: "pointer",
-                  }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
-                  Restore
-                </button>
-                <button
-                  onClick={() => setConfirmDeleteId(p.id)}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 5,
-                    padding: "5px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500,
-                    background: "color-mix(in oklch, var(--red, #f87171) 10%, transparent)",
-                    color: "var(--red, #f87171)",
-                    border: "1px solid color-mix(in oklch, var(--red, #f87171) 25%, transparent)",
-                    cursor: "pointer",
-                  }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M5 6l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"/></svg>
-                  Delete permanently
-                </button>
+            <>
+              {/* Bulk toolbar */}
+              <div className={`page-toolbar${selectedDeletedIds.size > 0 ? " has-selection" : ""}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                {selectedDeletedIds.size > 0 ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "var(--surface-2)", border: "1px solid var(--accent-line)", borderRadius: 9, fontSize: 12.5 }}>
+                    <span style={{ color: "var(--text)" }}><span className="mono" style={{ color: "var(--accent)" }}>{selectedDeletedIds.size}</span> selected</span>
+                    <span style={{ width: 1, height: 14, background: "var(--border)" }}/>
+                    <button onClick={bulkRestoreDeleted} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--text-muted)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Recover</button>
+                    <button onClick={() => setConfirmBulkDeleteContent(true)} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--red, #f87171)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Delete permanently</button>
+                    <div style={{ flex: 1 }}/>
+                    <button onClick={() => setSelectedDeletedIds(new Set())} className="btn-icon" style={{ width: 24, height: 24 }}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setSelectedDeletedIds(new Set(deletedPieces.map((p) => p.id)))}
+                    style={{ fontSize: 12, color: "var(--text-muted)", background: "transparent", border: "1px solid var(--border)", borderRadius: 7, padding: "5px 10px", cursor: "pointer" }}
+                  >Select all</button>
+                )}
               </div>
-            ))
+
+              {deletedPieces.length > 0 && (
+                <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 6, marginTop: 4 }}>Content pieces</div>
+              )}
+              {deletedPieces.map((p) => {
+                const isSelected = selectedDeletedIds.has(p.id);
+                return (
+                  <div key={p.id} style={{
+                    display: "flex", alignItems: "center", gap: 12,
+                    padding: "12px 16px", background: isSelected ? "color-mix(in oklch, var(--accent) 8%, var(--surface))" : "var(--surface)",
+                    border: `1px solid ${isSelected ? "var(--accent-line)" : "var(--border)"}`,
+                    borderRadius: 10,
+                  }}>
+                    <button onClick={() => setSelectedDeletedIds((s) => { const n = new Set(s); isSelected ? n.delete(p.id) : n.add(p.id); return n; })} style={{
+                      width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+                      border: "1px solid " + (isSelected ? "var(--accent)" : "var(--border-strong)"),
+                      background: isSelected ? "var(--accent)" : "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      color: "#1a1208", cursor: "pointer",
+                    }}>
+                      {isSelected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>}
+                    </button>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 500, color: "var(--text)", marginBottom: 2 }}>{p.title}</div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{KIND_LABELS[p.kind]} · {p.scope}</div>
+                    </div>
+                    <button onClick={() => restorePiece(p.id)} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500, background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border)", cursor: "pointer" }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
+                      Restore
+                    </button>
+                    <button onClick={() => setConfirmDeleteId(p.id)} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 7, fontSize: 12, fontWeight: 500, background: "color-mix(in oklch, var(--red, #f87171) 10%, transparent)", color: "var(--red, #f87171)", border: "1px solid color-mix(in oklch, var(--red, #f87171) 25%, transparent)", cursor: "pointer" }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M5 6l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"/></svg>
+                      Delete permanently
+                    </button>
+                  </div>
+                );
+              })}
+
+            </>
           )}
         </div>
-      ) : isAnalysis ? (
-        <AnalysisTab
-          entries={filteredAnalysis}
-          pieces={pieces}
-          onAdd={(e) => setAnalysis((a) => [e, ...a])}
-          onOpenPiece={openPieceFromAnalysis}
-          showAddExternal={showAddAnalysis}
-          onCloseExternal={() => setShowAddAnalysis(false)}
-        />
       ) : view === "board" ? (
         <KanbanBoard pieces={filtered} today={today} onOpen={setSelectedPiece} onAddCard={addCardAtStatus}/>
       ) : (
@@ -1200,20 +1321,19 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
       {liveSelected && (
         <PieceSlideOver
           piece={liveSelected}
+          analyses={analysis.filter((a) => a.content_piece_id === liveSelected.id)}
           onClose={() => setSelectedPiece(null)}
           onUpdate={updatePiece}
           onDelete={removePiece}
           onMoveStatus={moveStatus}
-          onAnalyze={(entry) => {
-            setAnalysis((a) => [entry, ...a]);
-            setKind("analysis"); localStorage.setItem("content_kind", "analysis");
-            setSelectedPiece(null);
-          }}
+          onAnalyze={(entry) => { setAnalysis((a) => [entry, ...a]); }}
+          onDeleteAnalysis={handleDeleteAnalysis}
+          onArchive={archivePiece}
         />
       )}
 
       {/* New piece modal */}
-      {showNew && kind !== "analysis" && kind !== "deleted" && (
+      {showNew && !isSpecialTab && (
         <NewPieceModal
           onClose={() => setShowNew(false)}
           onAdd={addPiece}
@@ -1223,9 +1343,41 @@ export function ContentClient({ pieces: initialPieces, analysis: initialAnalysis
         />
       )}
 
+      {/* Bulk permanent delete confirmation */}
+      {confirmBulkDeleteContent && (
+        <>
+          <div onClick={() => setConfirmBulkDeleteContent(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)", zIndex: 70, animation: "fade-in 0.18s" }}/>
+          <div style={{
+            position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+            width: "90vw", maxWidth: 420, background: "var(--surface)",
+            border: "1px solid var(--border-strong)", borderRadius: 14, padding: 24,
+            zIndex: 71, boxShadow: "0 24px 64px rgba(0,0,0,0.55)", animation: "fade-in 0.15s",
+          }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 20 }}>
+              <div style={{
+                width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+                background: "color-mix(in oklch, var(--red, #f87171) 12%, transparent)",
+                border: "1px solid color-mix(in oklch, var(--red, #f87171) 25%, transparent)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--red, #f87171)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M5 6l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"/></svg>
+              </div>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)", marginBottom: 5 }}>Delete {selectedDeletedIds.size} {selectedDeletedIds.size === 1 ? "piece" : "pieces"} permanently?</div>
+                <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.55 }}>These {selectedDeletedIds.size} pieces will be gone forever. This cannot be undone.</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={bulkHardDeleteSelected} disabled={isPendingBulk} style={{ flex: 1, padding: "9px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "var(--red, #f87171)", color: "#fff", border: "none", cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Yes, delete forever</button>
+              <button onClick={() => setConfirmBulkDeleteContent(false)} style={{ padding: "9px 18px", borderRadius: 8, fontSize: 13, background: "transparent", color: "var(--text-muted)", border: "1px solid var(--border)", cursor: "pointer" }}>Cancel</button>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Permanent delete warning dialog */}
       {confirmDeleteId && (() => {
-        const piece = pieces.find((p) => p.id === confirmDeleteId);
+        const piece = archivedPieces.find((p) => p.id === confirmDeleteId) ?? userArchivedPieces.find((p) => p.id === confirmDeleteId) ?? pieces.find((p) => p.id === confirmDeleteId);
         return (
           <>
             <div onClick={() => setConfirmDeleteId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)", zIndex: 70, animation: "fade-in 0.18s" }}/>

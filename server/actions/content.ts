@@ -9,13 +9,17 @@ const ALLOWED_CONTENT_FIELDS = new Set([
   "title", "inspiration_link", "status", "notes", "finish_link",
   "publish_date", "about", "copy", "visual_url",
   "todo_draft_copy", "todo_create_visual", "todo_schedule_post", "todo_publish_post",
-  "archived",
+  "archived", "user_archived",
 ]);
+
+const NULLABLE_DATE_FIELDS = new Set(["publish_date"]);
 
 export async function updateContentPiece(id: string, updates: Record<string, unknown>) {
   const safe: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(updates)) {
-    if (ALLOWED_CONTENT_FIELDS.has(k)) safe[k] = v;
+    if (ALLOWED_CONTENT_FIELDS.has(k)) {
+      safe[k] = (NULLABLE_DATE_FIELDS.has(k) && v === "") ? null : v;
+    }
   }
   if (!Object.keys(safe).length) return { success: true };
 
@@ -77,6 +81,101 @@ export async function createAnalysisEntry(params: {
 export async function deleteContentPiece(id: string) {
   const db = createServerClient();
   const { error } = await db.from("content_pieces").update({ archived: true }).eq("id", id);
+  if (error) return dbErr(error);
+  revalidatePath("/content");
+  return { success: true };
+}
+
+export async function bulkSoftDeleteContentPieces(ids: string[]) {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("content_pieces").update({ archived: true }).in("id", ids);
+  if (error) return dbErr(error);
+  revalidatePath("/content");
+  return { success: true };
+}
+
+export async function bulkUnarchiveContentPieces(ids: string[]) {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("content_pieces").update({ user_archived: false }).in("id", ids);
+  if (error) return dbErr(error);
+  revalidatePath("/content");
+  return { success: true };
+}
+
+export async function bulkRestoreContentPieces(ids: string[]) {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("content_pieces").update({ archived: false }).in("id", ids);
+  if (error) return dbErr(error);
+  revalidatePath("/content");
+  return { success: true };
+}
+
+export async function bulkHardDeleteContentPieces(ids: string[]) {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("content_pieces").delete().in("id", ids);
+  if (error) return dbErr(error);
+  revalidatePath("/content");
+  return { success: true };
+}
+
+export async function hardDeleteContentPiece(id: string) {
+  const db = createServerClient();
+  const { error } = await db.from("content_pieces").delete().eq("id", id);
+  if (error) return dbErr(error);
+  revalidatePath("/content");
+  return { success: true };
+}
+
+export async function deleteAnalysisEntry(id: string) {
+  const db = createServerClient();
+  const { error } = await db.from("content_analysis").update({ archived: true }).eq("id", id);
+  if (error) return dbErr(error);
+  revalidatePath("/content");
+  return { success: true };
+}
+
+export async function restoreAnalysisEntry(id: string) {
+  const db = createServerClient();
+  const { error } = await db.from("content_analysis").update({ archived: false }).eq("id", id);
+  if (error) return dbErr(error);
+  revalidatePath("/content");
+  return { success: true };
+}
+
+export async function hardDeleteAnalysisEntry(id: string) {
+  const db = createServerClient();
+  const { error } = await db.from("content_analysis").delete().eq("id", id);
+  if (error) return dbErr(error);
+  revalidatePath("/content");
+  return { success: true };
+}
+
+export async function bulkDeleteAnalysisEntries(ids: string[]) {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("content_analysis").update({ archived: true }).in("id", ids);
+  if (error) return dbErr(error);
+  revalidatePath("/content");
+  return { success: true };
+}
+
+export async function bulkRestoreAnalysisEntries(ids: string[]) {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("content_analysis").update({ archived: false }).in("id", ids);
+  if (error) return dbErr(error);
+  revalidatePath("/content");
+  return { success: true };
+}
+
+export async function bulkHardDeleteAnalysisEntries(ids: string[]) {
+  if (!ids.length) return { success: true };
+  const db = createServerClient();
+  const { error } = await db.from("content_analysis").delete().in("id", ids);
   if (error) return dbErr(error);
   revalidatePath("/content");
   return { success: true };

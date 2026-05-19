@@ -7,6 +7,8 @@ import {
   updatePersonalLeadField,
   softDeletePersonalLead,
   hardDeletePersonalLead,
+  bulkUpdatePersonalLeadStatus,
+  bulkHardDeletePersonalLeads,
   importPersonalLeads,
 } from "@/server/actions/personal";
 import type { PersonalLead } from "@/lib/supabase/types";
@@ -352,6 +354,8 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showAdd, setShowAdd] = useState(false);
   const [isPendingImport, startImport] = useTransition();
+  const [isPendingBulk, startBulk] = useTransition();
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [sort, setSort] = useState<"newest" | "oldest" | "az">("newest");
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -426,6 +430,61 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
     }).join(","));
     const blob = new Blob([headers.join(",") + "\n" + rows.join("\n")], { type: "text/csv" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "personal-outreach.csv"; a.click();
+  }
+
+  function bulkArchive() {
+    const ids = Array.from(selected);
+    startBulk(async () => {
+      setLeads((ls) => ls.map((l) => ids.includes(l.id) ? { ...l, status: "Archived" } as Lead : l));
+      await bulkUpdatePersonalLeadStatus(ids, "Archived");
+      setSelected(new Set());
+      setFilter("archived");
+      router.refresh();
+    });
+  }
+
+  function bulkSoftDelete() {
+    const ids = Array.from(selected);
+    startBulk(async () => {
+      setLeads((ls) => ls.map((l) => ids.includes(l.id) ? { ...l, status: "Dead" } as Lead : l));
+      await bulkUpdatePersonalLeadStatus(ids, "Dead");
+      setSelected(new Set());
+      setFilter("deleted");
+      router.refresh();
+    });
+  }
+
+  function bulkUnarchive() {
+    const ids = Array.from(selected);
+    startBulk(async () => {
+      setLeads((ls) => ls.map((l) => ids.includes(l.id) ? { ...l, status: "Active" } as Lead : l));
+      await bulkUpdatePersonalLeadStatus(ids, "Active");
+      setSelected(new Set());
+      setFilter("active");
+      router.refresh();
+    });
+  }
+
+  function bulkRecover() {
+    const ids = Array.from(selected);
+    startBulk(async () => {
+      setLeads((ls) => ls.map((l) => ids.includes(l.id) ? { ...l, status: "Active" } as Lead : l));
+      await bulkUpdatePersonalLeadStatus(ids, "Active");
+      setSelected(new Set());
+      setFilter("active");
+      router.refresh();
+    });
+  }
+
+  function bulkPermDelete() {
+    const ids = Array.from(selected);
+    startBulk(async () => {
+      setLeads((ls) => ls.filter((l) => !ids.includes(l.id)));
+      await bulkHardDeletePersonalLeads(ids);
+      setSelected(new Set());
+      setConfirmBulkDelete(false);
+      router.refresh();
+    });
   }
 
   const counts = useMemo(() => {
@@ -532,8 +591,22 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
           <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "var(--surface-2)", border: "1px solid var(--accent-line)", borderRadius: 9, fontSize: 12.5 }}>
             <span style={{ color: "var(--text)" }}><span className="mono" style={{ color: "var(--accent)" }}>{selected.size}</span> selected</span>
             <span style={{ width: 1, height: 14, background: "var(--border)" }}/>
-            <button onClick={() => { selected.forEach((id) => updateLocal(id, "status", "Archived")); setSelected(new Set()); }} style={{ background: "transparent", border: "none", color: "var(--text-muted)", fontSize: 12.5, cursor: "pointer" }}>Archive</button>
-            <button onClick={() => { selected.forEach((id) => softDelete(id)); setSelected(new Set()); }} style={{ background: "transparent", border: "none", color: "var(--red)", fontSize: 12.5, cursor: "pointer" }}>Delete</button>
+            {filter === "deleted" ? (
+              <>
+                <button onClick={bulkRecover} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--text-muted)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Recover</button>
+                <button onClick={() => setConfirmBulkDelete(true)} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--red)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Delete permanently</button>
+              </>
+            ) : filter === "archived" ? (
+              <>
+                <button onClick={bulkUnarchive} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--text-muted)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Unarchive</button>
+                <button onClick={bulkSoftDelete} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--red)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Delete</button>
+              </>
+            ) : (
+              <>
+                <button onClick={bulkArchive} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--text-muted)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Archive</button>
+                <button onClick={bulkSoftDelete} disabled={isPendingBulk} style={{ background: "transparent", border: "none", color: "var(--red)", fontSize: 12.5, cursor: "pointer", opacity: isPendingBulk ? 0.5 : 1 }}>Delete</button>
+              </>
+            )}
             <div style={{ flex: 1 }}/>
             <button onClick={() => setSelected(new Set())} className="btn-icon" style={{ width: 24, height: 24 }}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -608,6 +681,49 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
           </div>
         </div>
       </div>
+
+      {confirmBulkDelete && (
+        <>
+          <div onClick={() => setConfirmBulkDelete(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)", zIndex: 70, animation: "fade-in 0.18s" }}/>
+          <div style={{
+            position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+            width: "90vw", maxWidth: 420, background: "var(--surface)",
+            border: "1px solid var(--border-strong)", borderRadius: 14, padding: 24,
+            zIndex: 71, boxShadow: "0 24px 64px rgba(0,0,0,0.55)", animation: "fade-in 0.15s",
+          }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 20 }}>
+              <div style={{
+                width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+                background: "color-mix(in oklch, var(--red, #f87171) 12%, transparent)",
+                border: "1px solid color-mix(in oklch, var(--red, #f87171) 25%, transparent)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--red, #f87171)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M5 6l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"/></svg>
+              </div>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)", marginBottom: 5 }}>Delete {selected.size} leads permanently?</div>
+                <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.55 }}>
+                  These {selected.size} leads will be gone forever. This cannot be undone.
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={bulkPermDelete}
+                style={{ flex: 1, padding: "9px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "var(--red, #f87171)", color: "#fff", border: "none", cursor: "pointer" }}
+              >
+                Yes, delete forever
+              </button>
+              <button
+                onClick={() => setConfirmBulkDelete(false)}
+                style={{ padding: "9px 18px", borderRadius: 8, fontSize: 13, background: "transparent", color: "var(--text-muted)", border: "1px solid var(--border)", cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {showAdd && (
         <AddLeadModal
