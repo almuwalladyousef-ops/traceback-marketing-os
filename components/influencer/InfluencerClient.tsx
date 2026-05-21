@@ -21,7 +21,7 @@ import type { Influencer } from "@/lib/supabase/types";
 import { getBrowserClient } from "@/lib/supabase/browser";
 import { MobileActionsPortal, MobileMoreMenu } from "@/components/shell/MobileActionsPortal";
 
-type InfWithDue = Influencer & { dueTouch: "touch_1" | "touch_2" | "touch_3" | "re_engage" | null; dueArchive: boolean };
+type InfWithDue = Influencer & { dueTouch: "touch_1" | "touch_2" | "touch_3" | "touch_4" | "re_engage" | null; dueArchive: boolean };
 
 function fmtDate(d: string | null) {
   if (!d) return "";
@@ -39,9 +39,10 @@ const PLATFORM_BG: Record<string, string> = { IG: "oklch(0.7 0.13 330 / 0.12)", 
 
 const INF_FILTERS = [
   { id: "not_contacted", label: "Not sent",  icon: "○" },
-  { id: "touch1",        label: "Bump 1",    icon: "↗" },
-  { id: "touch2",        label: "Bump 2",    icon: "↻" },
-  { id: "touch3",        label: "Bump 3",    icon: "↻↻" },
+  { id: "touch1",        label: "DM sent",   icon: "↗" },
+  { id: "touch2",        label: "Bump 1",    icon: "↻" },
+  { id: "touch3",        label: "Bump 2",    icon: "↻↻" },
+  { id: "touch4",        label: "Close",     icon: "✗" },
   { id: "replied",       label: "Replied",   icon: "✓" },
   { id: "archived",      label: "Archived",  icon: "▤" },
   { id: "deleted",       label: "Deleted",   icon: "✕" },
@@ -57,7 +58,8 @@ function getFiltered(list: InfWithDue[], touchFilter: FilterId, platformFilter: 
     case "not_contacted": return filtered.filter((i) => i.status === "Active" && !i.touch_1);
     case "touch1":        return filtered.filter((i) => i.status === "Active" && i.touch_1 && !i.touch_2);
     case "touch2":        return filtered.filter((i) => i.status === "Active" && i.touch_2 && !i.touch_3);
-    case "touch3":        return filtered.filter((i) => i.status === "Active" && i.touch_3);
+    case "touch3":        return filtered.filter((i) => i.status === "Active" && i.touch_3 && !i.touch_4);
+    case "touch4":        return filtered.filter((i) => i.status === "Active" && i.touch_4);
     case "replied":       return filtered.filter((i) => i.replied);
     case "archived":      return filtered.filter((i) => i.status === "Archived");
     default:              return filtered;
@@ -146,6 +148,75 @@ function InfInlineEdit({ value, onSave, placeholder, textStyle }: {
   );
 }
 
+/* ─── Messages panel (localStorage) ────────────────────────────────── */
+function InfMessagesPanel({ infId }: { infId: string }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(() =>
+    typeof window !== "undefined" ? (localStorage.getItem(`inf-msg-${infId}`) ?? "") : ""
+  );
+
+  const hasText = text.trim().length > 0;
+
+  function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setText(e.target.value);
+    localStorage.setItem(`inf-msg-${infId}`, e.target.value);
+  }
+
+  return (
+    <div style={{ display: "flex", justifyContent: "center" }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title="Message"
+        style={{
+          fontSize: 10.5, padding: "3px 8px", borderRadius: 5,
+          background: hasText ? "var(--accent-dim)" : "var(--surface-3)",
+          color: hasText ? "var(--accent)" : "var(--text-dim)",
+          border: "1px solid " + (hasText ? "var(--accent-line)" : "var(--border)"),
+          cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4,
+          transition: "all 0.12s",
+        }}
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        {hasText ? "Msgs ✓" : "Msgs"}
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 58 }}/>
+          <div style={{
+            position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+            width: 460, maxWidth: "92vw", background: "var(--surface)",
+            border: "1px solid var(--border-strong)", borderRadius: 12, padding: 20,
+            zIndex: 59, boxShadow: "0 16px 48px rgba(0,0,0,0.45)",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Message</div>
+              <button onClick={() => setOpen(false)} style={{ background: "transparent", border: "none", color: "var(--text-dim)", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 2 }}>×</button>
+            </div>
+            <textarea
+              value={text}
+              onChange={handleChange}
+              placeholder="Paste message here…"
+              rows={12}
+              style={{
+                width: "100%", resize: "vertical",
+                background: "var(--surface-3)", border: "1px solid var(--border)",
+                borderRadius: 6, padding: "8px 10px",
+                color: "var(--text)", fontSize: 11.5,
+                fontFamily: "JetBrains Mono, ui-monospace, monospace",
+                lineHeight: 1.6, outline: "none", whiteSpace: "pre", boxSizing: "border-box",
+              }}
+              onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")}
+              onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ─── Touch cell ────────────────────────────────────────────────────── */
 function InfTouchCell({ checked, date, disabled, onToggle, onDateChange }: {
   checked: boolean;
@@ -191,7 +262,7 @@ function InfluencerRow({ inf, num, selected, today, onSelect, onFieldUpdate, onT
   today: string;
   onSelect: (id: string, on: boolean) => void;
   onFieldUpdate: (id: string, field: string, value: string | boolean | null) => void;
-  onTouchToggle: (id: string, touch: "touch_1" | "touch_2" | "touch_3", checked: boolean) => void;
+  onTouchToggle: (id: string, touch: "touch_1" | "touch_2" | "touch_3" | "touch_4", checked: boolean) => void;
   onTouchDateChange: (id: string, field: string, value: string) => void;
   onArchive: (id: string) => void;
   onSoftDelete: (id: string) => void;
@@ -203,10 +274,20 @@ function InfluencerRow({ inf, num, selected, today, onSelect, onFieldUpdate, onT
   const isArchived = inf.status === "Archived";
   const isDeleted = inf.status === "Deleted";
 
+  const nextDueDate: string | null = (() => {
+    if (isArchived || isDeleted) return null;
+    const addD = (d: string, n: number) => { const dt = new Date(d); dt.setDate(dt.getDate() + n); return dt.toISOString().split("T")[0]; };
+    if (inf.touch_1 && !inf.touch_2 && inf.touch_1_date) return addD(inf.touch_1_date, 2);
+    if (inf.touch_2 && !inf.touch_3 && inf.touch_2_date) return addD(inf.touch_2_date, 4);
+    if (inf.touch_3 && !inf.touch_4 && inf.touch_3_date) return addD(inf.touch_3_date, 5);
+    return null;
+  })();
+  const nextDueOverdue = nextDueDate ? nextDueDate <= today : false;
+
   return (
     <div className="row-hover" style={{
       display: "grid",
-      gridTemplateColumns: "36px 44px 220px 110px 90px 90px 90px 150px 1fr 70px",
+      gridTemplateColumns: "36px 44px 220px 110px 90px 90px 90px 90px 150px 70px 1fr 70px",
       alignItems: "center", padding: "12px 14px",
       borderTop: "1px solid var(--border)",
       background: selected ? "color-mix(in oklch, var(--accent) 8%, transparent)" : "transparent",
@@ -246,6 +327,11 @@ function InfluencerRow({ inf, num, selected, today, onSelect, onFieldUpdate, onT
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           </a>
         </div>
+        {nextDueDate && (
+          <div className="mono" style={{ fontSize: 10, marginTop: 2, color: nextDueOverdue ? "var(--accent)" : "var(--text-dim)" }}>
+            {nextDueOverdue ? `↑ due ${fmtDate(nextDueDate)}` : `due ${fmtDate(nextDueDate)}`}
+          </div>
+        )}
       </div>
 
       <div style={{ display: "flex", justifyContent: "center" }}>
@@ -271,6 +357,13 @@ function InfluencerRow({ inf, num, selected, today, onSelect, onFieldUpdate, onT
           checked={inf.touch_3} date={inf.touch_3_date} disabled={isArchived || !inf.touch_2}
           onToggle={(v) => onTouchToggle(inf.id, "touch_3", v)}
           onDateChange={(d) => onTouchDateChange(inf.id, "touch_3_date", d)}
+        />
+      </div>
+      <div style={{ display: "flex", justifyContent: "center" }}>
+        <InfTouchCell
+          checked={inf.touch_4} date={inf.touch_4_date} disabled={isArchived || !inf.touch_3}
+          onToggle={(v) => onTouchToggle(inf.id, "touch_4", v)}
+          onDateChange={(d) => onTouchDateChange(inf.id, "touch_4_date", d)}
         />
       </div>
 
@@ -310,6 +403,8 @@ function InfluencerRow({ inf, num, selected, today, onSelect, onFieldUpdate, onT
           </button>
         )}
       </div>
+
+      <InfMessagesPanel infId={inf.id}/>
 
       <div style={{ paddingRight: 12 }}>
         <InfInlineEdit value={inf.notes} onSave={(v) => onFieldUpdate(inf.id, "notes", v)} placeholder="Add notes…"/>
@@ -463,15 +558,15 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
     startTransition(async () => { await updateInfluencerField(id, field, value); });
   }
 
-  function handleTouchToggle(id: string, touch: "touch_1" | "touch_2" | "touch_3", checked: boolean) {
+  function handleTouchToggle(id: string, touch: "touch_1" | "touch_2" | "touch_3" | "touch_4", checked: boolean) {
     const inf = influencers.find((i) => i.id === id);
-    const autoArchive = touch === "touch_3" && checked && !!inf && !inf.replied;
+    const autoArchive = touch === "touch_4" && checked && !!inf && !inf.replied;
     const dateField = `${touch}_date` as keyof InfWithDue;
     setInfluencers((list) => list.map((i) => {
       if (i.id !== id) return i;
       const updated = { ...i, [touch]: checked, [dateField]: checked ? today : null };
       if (autoArchive) updated.status = "Archived";
-      if (touch === "touch_3") updated.dueArchive = false;
+      if (touch === "touch_4") updated.dueArchive = false;
       return updated;
     }));
     startTransition(async () => {
@@ -508,8 +603,8 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
   function handleReEngage(id: string) {
     setInfluencers((list) => list.map((i) => i.id === id ? {
       ...i, status: "Active" as const,
-      touch_1: false, touch_2: false, touch_3: false,
-      touch_1_date: null, touch_2_date: null, touch_3_date: null,
+      touch_1: false, touch_2: false, touch_3: false, touch_4: false,
+      touch_1_date: null, touch_2_date: null, touch_3_date: null, touch_4_date: null,
       archive_date: null, dueTouch: null, dueArchive: false,
     } : i));
     startTransition(async () => { await reEngageInfluencer(id); });
@@ -724,9 +819,9 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
       {/* Table */}
       <div className="card" style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
-          <div style={{ minWidth: 1060 }}>
+          <div style={{ minWidth: 1150 }}>
             <div style={{
-              display: "grid", gridTemplateColumns: "36px 44px 220px 110px 90px 90px 90px 150px 1fr 70px",
+              display: "grid", gridTemplateColumns: "36px 44px 220px 110px 90px 90px 90px 90px 150px 70px 1fr 70px",
               padding: "10px 14px", background: "var(--surface-2)",
               borderBottom: "1px solid var(--border)",
               fontSize: 10.5, color: "var(--text-muted)",
@@ -744,10 +839,12 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
               <div style={{ textAlign: "center" }}>#</div>
               <div style={{ paddingLeft: 4 }}>Handle</div>
               <div style={{ textAlign: "center" }}>Platform</div>
+              <div style={{ textAlign: "center" }}>Initial DM</div>
               <div style={{ textAlign: "center" }}>Bump 1</div>
               <div style={{ textAlign: "center" }}>Bump 2</div>
-              <div style={{ textAlign: "center" }}>Bump 3</div>
+              <div style={{ textAlign: "center" }}>Close</div>
               <div style={{ textAlign: "center" }}>Replied</div>
+              <div style={{ textAlign: "center" }}>Msgs</div>
               <div>Notes</div>
               <div style={{ textAlign: "center" }}>Actions</div>
             </div>
@@ -831,8 +928,8 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
               link: (fd.get("link") as string) || "",
               platform: (fd.get("platform") as "IG" | "X") || "IG",
               notes: (fd.get("notes") as string) || null,
-              touch_1: false, touch_2: false, touch_3: false,
-              touch_1_date: null, touch_2_date: null, touch_3_date: null,
+              touch_1: false, touch_2: false, touch_3: false, touch_4: false,
+              touch_1_date: null, touch_2_date: null, touch_3_date: null, touch_4_date: null,
               status: "Active",
               archive_date: null,
               cycle_count: 0,

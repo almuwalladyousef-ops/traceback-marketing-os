@@ -8,7 +8,8 @@ import { dbErr } from "@/server/db-error";
 
 const ALLOWED_COMPANY_FIELDS = new Set([
   "name", "url", "industry", "outreach_date", "follow_up_date",
-  "follow_up_2_date", "status", "reply_notes", "archived", "soft_deleted",
+  "follow_up_2_date", "follow_up_3_date", "follow_up_4_date",
+  "status", "reply_notes", "archived", "soft_deleted",
 ]);
 
 const CompanySchema = z.object({
@@ -76,11 +77,11 @@ export async function updateCompanyField(id: string, field: string, value: strin
 export async function archiveCompany(id: string) {
   const db = createServerClient();
   const today = todayStr();
-  const { data } = await db.from("companies").select("follow_up_3_date").eq("id", id).single();
-  const wasCycled = !!data?.follow_up_3_date;
+  const { data } = await db.from("companies").select("archive_date").eq("id", id).single();
+  const wasCycled = !!data?.archive_date;
   const update = wasCycled
     ? { soft_deleted: true }
-    : { archived: true, follow_up_3_date: today };
+    : { archived: true, archive_date: today };
   const { error } = await db.from("companies").update(update).eq("id", id);
   if (error) return dbErr(error);
 
@@ -101,9 +102,12 @@ export async function reEngageCompany(id: string) {
   const db = createServerClient();
   const { error } = await db.from("companies").update({
     archived: false,
+    archive_date: null,
     outreach_date: null,
     follow_up_date: null,
     follow_up_2_date: null,
+    follow_up_3_date: null,
+    follow_up_4_date: null,
     status: "Not Started" as const,
     reply_notes: null,
   }).eq("id", id);

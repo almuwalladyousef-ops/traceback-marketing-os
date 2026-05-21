@@ -9,40 +9,43 @@ export function addDaysStr(dateStr: string, days: number): string {
 }
 
 export function influencerDueArchive(inf: {
-  touch_3: boolean;
-  touch_3_date: string | null;
+  touch_4: boolean;
+  touch_4_date: string | null;
   status: string;
 }): boolean {
-  if (inf.status !== "Active" || !inf.touch_3 || !inf.touch_3_date) return false;
+  if (inf.status !== "Active" || !inf.touch_4 || !inf.touch_4_date) return false;
   const today = todayStr();
-  return today >= addDaysStr(inf.touch_3_date, 3);
+  return today >= addDaysStr(inf.touch_4_date, 3);
 }
 
 export function influencerDueTouch(inf: {
   touch_1: boolean;
   touch_2: boolean;
   touch_3: boolean;
+  touch_4: boolean;
   touch_1_date: string | null;
   touch_2_date: string | null;
   touch_3_date: string | null;
+  touch_4_date: string | null;
   status: string;
   archive_date: string | null;
-}): "touch_1" | "touch_2" | "touch_3" | "re_engage" | null {
+}): "touch_1" | "touch_2" | "touch_3" | "touch_4" | "re_engage" | null {
   const today = todayStr();
 
   if (inf.touch_1 && !inf.touch_2 && inf.touch_1_date) {
-    const dueDate = addDaysStr(inf.touch_1_date, 2);
-    if (today >= dueDate) return "touch_2";
+    if (today >= addDaysStr(inf.touch_1_date, 2)) return "touch_2";
   }
 
   if (inf.touch_2 && !inf.touch_3 && inf.touch_2_date) {
-    const dueDate = addDaysStr(inf.touch_2_date, 5);
-    if (today >= dueDate) return "touch_3";
+    if (today >= addDaysStr(inf.touch_2_date, 4)) return "touch_3";
+  }
+
+  if (inf.touch_3 && !inf.touch_4 && inf.touch_3_date) {
+    if (today >= addDaysStr(inf.touch_3_date, 5)) return "touch_4";
   }
 
   if (inf.status === "Archived" && inf.archive_date) {
-    const reEngageDate = addDaysStr(inf.archive_date, 30);
-    if (today >= reEngageDate) return "re_engage";
+    if (today >= addDaysStr(inf.archive_date, 30)) return "re_engage";
   }
 
   return null;

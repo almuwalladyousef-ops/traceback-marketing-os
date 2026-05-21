@@ -24,7 +24,7 @@ import { Plus, Upload, X, ExternalLink, ArchiveRestore, Trash2, RotateCcw, Archi
 import { MobileActionsPortal, MobileMoreMenu } from "@/components/shell/MobileActionsPortal";
 
 type CompanyWithDue = Company & { due: boolean; dueArchive: boolean; reEngageDue: boolean };
-type Filter = "not_started" | "sent" | "bump1" | "bump2" | "replied" | "archived" | "deleted";
+type Filter = "not_started" | "sent" | "bump1" | "bump2" | "bump3" | "breakup" | "replied" | "archived" | "deleted";
 type Sort = "oldest" | "newest" | "az";
 
 interface Props {
@@ -37,13 +37,15 @@ const FILTERS = [
   { id: "sent" as Filter, label: "Sent", icon: "↗" },
   { id: "bump1" as Filter, label: "Bump 1", icon: "↻" },
   { id: "bump2" as Filter, label: "Bump 2", icon: "↻↻" },
+  { id: "bump3" as Filter, label: "Bump 3", icon: "↻↻↻" },
+  { id: "breakup" as Filter, label: "Close", icon: "✗" },
   { id: "replied" as Filter, label: "Replied", icon: "✓" },
   { id: "archived" as Filter, label: "Archived", icon: "▤" },
   { id: "deleted" as Filter, label: "Deleted", icon: "✕" },
 ];
 
-const COLS = "36px 44px 200px 130px 80px 80px 80px 130px 170px 1fr 70px";
-const MIN_WIDTH = "1150px";
+const COLS = "36px 44px 200px 130px 80px 80px 80px 80px 80px 130px 170px 70px 1fr 70px";
+const MIN_WIDTH = "1430px";
 
 const TODAY = new Date().toISOString().split("T")[0];
 
@@ -86,7 +88,11 @@ function StatsStrip({ companies }: { companies: CompanyWithDue[] }) {
     const d1 = daysAgo(c.outreach_date) ?? 0;
     if (!c.follow_up_date) return d1 >= 2;
     const d2 = daysAgo(c.follow_up_date) ?? 0;
-    if (!c.follow_up_2_date) return d2 >= 5;
+    if (!c.follow_up_2_date) return d2 >= 4;
+    const d3 = daysAgo(c.follow_up_2_date) ?? 0;
+    if (!c.follow_up_3_date) return d3 >= 5;
+    const d4 = daysAgo(c.follow_up_3_date) ?? 0;
+    if (!c.follow_up_4_date) return d4 >= 6;
     return false;
   }).length + companies.filter((c) => c.reEngageDue).length;
 
@@ -370,6 +376,75 @@ function ContactChips({ contacts, onOpen, onAdd }: { contacts: Contact[]; onOpen
   );
 }
 
+/* ─── Messages panel (localStorage, single textarea) ─────────────────── */
+function EmailMessagesPanel({ companyId }: { companyId: string }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(() =>
+    typeof window !== "undefined" ? (localStorage.getItem(`email-msg-${companyId}`) ?? "") : ""
+  );
+
+  const hasText = text.trim().length > 0;
+
+  function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setText(e.target.value);
+    localStorage.setItem(`email-msg-${companyId}`, e.target.value);
+  }
+
+  return (
+    <div style={{ display: "flex", justifyContent: "center" }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title="Message"
+        style={{
+          fontSize: 10.5, padding: "3px 8px", borderRadius: 5,
+          background: hasText ? "var(--accent-dim)" : "var(--surface-3)",
+          color: hasText ? "var(--accent)" : "var(--text-dim)",
+          border: "1px solid " + (hasText ? "var(--accent-line)" : "var(--border)"),
+          cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4,
+          transition: "all 0.12s",
+        }}
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        {hasText ? "Msgs ✓" : "Msgs"}
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 58 }}/>
+          <div style={{
+            position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+            width: 460, maxWidth: "92vw", background: "var(--surface)",
+            border: "1px solid var(--border-strong)", borderRadius: 12, padding: 20,
+            zIndex: 59, boxShadow: "0 16px 48px rgba(0,0,0,0.45)",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Message</div>
+              <button onClick={() => setOpen(false)} style={{ background: "transparent", border: "none", color: "var(--text-dim)", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 2 }}>×</button>
+            </div>
+            <textarea
+              value={text}
+              onChange={handleChange}
+              placeholder="Paste message here…"
+              rows={12}
+              style={{
+                width: "100%", resize: "vertical",
+                background: "var(--surface-3)", border: "1px solid var(--border)",
+                borderRadius: 6, padding: "8px 10px",
+                color: "var(--text)", fontSize: 11.5,
+                fontFamily: "JetBrains Mono, ui-monospace, monospace",
+                lineHeight: 1.6, outline: "none", whiteSpace: "pre", boxSizing: "border-box",
+              }}
+              onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")}
+              onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ─── Contact slide-over ──────────────────────────────────────────────── */
 function CompanySlideOver({
   company,
@@ -471,33 +546,40 @@ function CompanySlideOver({
         <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
           {/* Timeline */}
           <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 12 }}>Outreach timeline</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24, position: "relative" }}>
+          <div style={{ display: "flex", flexDirection: "column", marginBottom: 24 }}>
             {[
-              { label: "Sent", date: company.outreach_date },
+              { label: "Initial", date: company.outreach_date },
               { label: "Bump 1", date: company.follow_up_date },
               { label: "Bump 2", date: company.follow_up_2_date },
+              { label: "Bump 3", date: company.follow_up_3_date },
+              { label: "Close", date: company.follow_up_4_date },
             ].map((step, i, arr) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
-                <div style={{
-                  width: 28, height: 28, borderRadius: "50%",
-                  background: step.date ? "var(--accent)" : "var(--surface-3)",
-                  border: step.date ? "none" : "1px dashed var(--border-strong)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  color: "#1a1208", flexShrink: 0,
-                  boxShadow: step.date ? "0 0 0 4px var(--accent-dim)" : "none",
-                }}>
-                  {step.date
-                    ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-                    : <span className="mono" style={{ fontSize: 10, color: "var(--text-dim)" }}>{i + 1}</span>
-                  }
+              <div key={i} style={{ display: "flex", gap: 12 }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+                  <div style={{
+                    width: 28, height: 28, borderRadius: "50%",
+                    background: step.date ? "var(--accent)" : "var(--surface-3)",
+                    border: step.date ? "none" : "1px dashed var(--border-strong)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    color: "#1a1208",
+                    boxShadow: step.date ? "0 0 0 4px var(--accent-dim)" : "none",
+                    flexShrink: 0,
+                  }}>
+                    {step.date
+                      ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                      : <span className="mono" style={{ fontSize: 10, color: "var(--text-dim)" }}>{i + 1}</span>
+                    }
+                  </div>
+                  {i < arr.length - 1 && (
+                    <span style={{ flex: 1, minHeight: 8, width: 1, background: "var(--border)", marginTop: 3 }}/>
+                  )}
                 </div>
-                {i < arr.length - 1 && (
-                  <span style={{ position: "absolute", left: 13.5, top: 28, height: 18, width: 1, background: "var(--border)" }}/>
-                )}
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>{step.label}</div>
-                  <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>
-                    {step.date ? `${fmtDate(step.date)} · ${daysAgo(step.date)}d ago` : "Not sent"}
+                <div style={{ flex: 1, paddingBottom: i < arr.length - 1 ? 10 : 0, paddingTop: 4 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>{step.label}</div>
+                    <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                      {step.date ? `${fmtDate(step.date)} · ${daysAgo(step.date)}d ago` : "Not sent"}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -685,6 +767,8 @@ function CompanyRow({
     outreach_date: company.outreach_date ?? "",
     follow_up_date: company.follow_up_date ?? "",
     follow_up_2_date: company.follow_up_2_date ?? "",
+    follow_up_3_date: company.follow_up_3_date ?? "",
+    follow_up_4_date: company.follow_up_4_date ?? "",
     status: company.status,
     reply_notes: company.reply_notes ?? "",
   });
@@ -697,6 +781,8 @@ function CompanyRow({
       outreach_date: company.outreach_date ?? "",
       follow_up_date: company.follow_up_date ?? "",
       follow_up_2_date: company.follow_up_2_date ?? "",
+      follow_up_3_date: company.follow_up_3_date ?? "",
+      follow_up_4_date: company.follow_up_4_date ?? "",
       status: company.status,
       reply_notes: company.reply_notes ?? "",
     });
@@ -739,13 +825,17 @@ function CompanyRow({
     const d1 = daysAgo(vals.outreach_date) ?? 0;
     if (!vals.follow_up_date) return d1 >= 2;
     const d2 = daysAgo(vals.follow_up_date) ?? 0;
-    if (!vals.follow_up_2_date) return d2 >= 5;
+    if (!vals.follow_up_2_date) return d2 >= 4;
+    const d3 = daysAgo(vals.follow_up_2_date) ?? 0;
+    if (!vals.follow_up_3_date) return d3 >= 5;
+    const d4 = daysAgo(vals.follow_up_3_date) ?? 0;
+    if (!vals.follow_up_4_date) return d4 >= 6;
     return false;
   })();
 
   const isDueArchive = !dimmed &&
-    !!vals.follow_up_2_date &&
-    (daysAgo(vals.follow_up_2_date) ?? 0) >= 3 &&
+    !!vals.follow_up_4_date &&
+    (daysAgo(vals.follow_up_4_date) ?? 0) >= 3 &&
     !["Replied", "In Conversation", "Dead"].includes(vals.status);
 
   return (
@@ -802,6 +892,10 @@ function CompanyRow({
       <TouchCell date={vals.follow_up_date || null} disabled={dimmed || !vals.outreach_date} onToggle={toggleDate("follow_up_date")} onDateChange={changeDate("follow_up_date")}/>
       {/* Bump 2 */}
       <TouchCell date={vals.follow_up_2_date || null} disabled={dimmed || !vals.follow_up_date} onToggle={toggleDate("follow_up_2_date")} onDateChange={changeDate("follow_up_2_date")}/>
+      {/* Bump 3 */}
+      <TouchCell date={vals.follow_up_3_date || null} disabled={dimmed || !vals.follow_up_2_date} onToggle={toggleDate("follow_up_3_date")} onDateChange={changeDate("follow_up_3_date")}/>
+      {/* Breakup */}
+      <TouchCell date={vals.follow_up_4_date || null} disabled={dimmed || !vals.follow_up_3_date} onToggle={toggleDate("follow_up_4_date")} onDateChange={changeDate("follow_up_4_date")}/>
 
       {/* status */}
       <div style={{ display: "flex", justifyContent: "center" }}>
@@ -816,6 +910,8 @@ function CompanyRow({
           onAdd={() => onOpenDetail(company, true)}
         />
       </div>
+
+      <EmailMessagesPanel companyId={company.id}/>
 
       {/* reply notes */}
       <div style={{ paddingRight: 12 }}>
@@ -951,7 +1047,9 @@ export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
     not_started: companies.filter((c) => active(c) && !c.outreach_date).length,
     sent: companies.filter((c) => active(c) && !!c.outreach_date && !c.follow_up_date).length,
     bump1: companies.filter((c) => active(c) && !!c.follow_up_date && !c.follow_up_2_date).length,
-    bump2: companies.filter((c) => active(c) && !!c.follow_up_2_date).length,
+    bump2: companies.filter((c) => active(c) && !!c.follow_up_2_date && !c.follow_up_3_date).length,
+    bump3: companies.filter((c) => active(c) && !!c.follow_up_3_date && !c.follow_up_4_date).length,
+    breakup: companies.filter((c) => active(c) && !!c.follow_up_4_date).length,
     replied: companies.filter((c) => !c.archived && !c.soft_deleted && ["Replied", "In Conversation"].includes(c.status)).length,
     archived: companies.filter((c) => c.archived && !c.soft_deleted).length,
     deleted: companies.filter((c) => c.soft_deleted).length,
@@ -966,7 +1064,9 @@ export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
       if (filter === "not_started") return active(c) && !c.outreach_date;
       if (filter === "sent") return active(c) && !!c.outreach_date && !c.follow_up_date;
       if (filter === "bump1") return active(c) && !!c.follow_up_date && !c.follow_up_2_date;
-      if (filter === "bump2") return active(c) && !!c.follow_up_2_date;
+      if (filter === "bump2") return active(c) && !!c.follow_up_2_date && !c.follow_up_3_date;
+      if (filter === "bump3") return active(c) && !!c.follow_up_3_date && !c.follow_up_4_date;
+      if (filter === "breakup") return active(c) && !!c.follow_up_4_date;
       if (filter === "replied") return ["Replied", "In Conversation"].includes(c.status);
       return true;
     })
@@ -1131,8 +1231,11 @@ export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
                 <div style={{ textAlign: "center" }}>Sent</div>
                 <div style={{ textAlign: "center" }}>Bump 1</div>
                 <div style={{ textAlign: "center" }}>Bump 2</div>
+                <div style={{ textAlign: "center" }}>Bump 3</div>
+                <div style={{ textAlign: "center" }}>Close</div>
                 <div style={{ textAlign: "center" }}>Status</div>
                 <div>Contacts</div>
+                <div style={{ textAlign: "center" }}>Msgs</div>
                 <div>Reply notes</div>
                 <div style={{ textAlign: "center" }}>Actions</div>
               </div>

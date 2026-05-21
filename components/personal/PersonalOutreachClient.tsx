@@ -129,6 +129,75 @@ function FollowUpCell({ date, today, onSave }: { date: string | null; today: str
   );
 }
 
+/* ─── Messages panel (localStorage) ────────────────────────────────── */
+function PersonalMessagesPanel({ leadId }: { leadId: string }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(() =>
+    typeof window !== "undefined" ? (localStorage.getItem(`personal-msg-${leadId}`) ?? "") : ""
+  );
+
+  const hasText = text.trim().length > 0;
+
+  function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setText(e.target.value);
+    localStorage.setItem(`personal-msg-${leadId}`, e.target.value);
+  }
+
+  return (
+    <div style={{ display: "flex", justifyContent: "center" }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title="Message"
+        style={{
+          fontSize: 10.5, padding: "3px 8px", borderRadius: 5,
+          background: hasText ? "var(--accent-dim)" : "var(--surface-3)",
+          color: hasText ? "var(--accent)" : "var(--text-dim)",
+          border: "1px solid " + (hasText ? "var(--accent-line)" : "var(--border)"),
+          cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4,
+          transition: "all 0.12s",
+        }}
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        {hasText ? "Msgs ✓" : "Msgs"}
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 58 }}/>
+          <div style={{
+            position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+            width: 460, maxWidth: "92vw", background: "var(--surface)",
+            border: "1px solid var(--border-strong)", borderRadius: 12, padding: 20,
+            zIndex: 59, boxShadow: "0 16px 48px rgba(0,0,0,0.45)",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Message</div>
+              <button onClick={() => setOpen(false)} style={{ background: "transparent", border: "none", color: "var(--text-dim)", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 2 }}>×</button>
+            </div>
+            <textarea
+              value={text}
+              onChange={handleChange}
+              placeholder="Paste message here…"
+              rows={12}
+              style={{
+                width: "100%", resize: "vertical",
+                background: "var(--surface-3)", border: "1px solid var(--border)",
+                borderRadius: 6, padding: "8px 10px",
+                color: "var(--text)", fontSize: 11.5,
+                fontFamily: "JetBrains Mono, ui-monospace, monospace",
+                lineHeight: 1.6, outline: "none", whiteSpace: "pre", boxSizing: "border-box",
+              }}
+              onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")}
+              onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ─── Lead row ──────────────────────────────────────────────────────── */
 function LeadRow({ lead, num, selected, today, onSelect, onUpdate, onDelete, onPermDelete }: {
   lead: Lead;
@@ -147,7 +216,7 @@ function LeadRow({ lead, num, selected, today, onSelect, onUpdate, onDelete, onP
   return (
     <div className="row-hover" style={{
       display: "grid",
-      gridTemplateColumns: "36px 44px 200px 160px 95px 85px 120px 100px 1fr 70px",
+      gridTemplateColumns: "36px 44px 200px 160px 95px 85px 120px 100px 70px 1fr 70px",
       alignItems: "center", padding: "12px 14px",
       borderTop: "1px solid var(--border)",
       background: selected ? "color-mix(in oklch, var(--accent) 8%, transparent)" : "transparent",
@@ -196,6 +265,8 @@ function LeadRow({ lead, num, selected, today, onSelect, onUpdate, onDelete, onP
       </div>
 
       <FollowUpCell date={lead.follow_up_date} today={today} onSave={(v) => onUpdate(lead.id, "follow_up_date", v)}/>
+
+      <PersonalMessagesPanel leadId={lead.id}/>
 
       <div style={{ paddingRight: 12 }}>
         <PInlineEdit value={lead.notes} onSave={(v) => onUpdate(lead.id, "notes", v)} placeholder="Add notes…" textStyle={{ fontSize: 12.5 }}/>
@@ -635,7 +706,7 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
           <div style={{ minWidth: 1050 }}>
             {/* Header */}
             <div style={{
-              display: "grid", gridTemplateColumns: "36px 44px 200px 160px 95px 85px 120px 100px 1fr 70px",
+              display: "grid", gridTemplateColumns: "36px 44px 200px 160px 95px 85px 120px 100px 70px 1fr 70px",
               padding: "10px 14px", background: "var(--surface-2)",
               borderBottom: "1px solid var(--border)",
               fontSize: 10.5, color: "var(--text-muted)",
@@ -656,6 +727,7 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
               <div>Phone</div>
               <div style={{ textAlign: "center" }}>Contacted</div>
               <div style={{ textAlign: "center" }}>Follow-up</div>
+              <div style={{ textAlign: "center" }}>Msgs</div>
               <div>Notes</div>
               <div style={{ textAlign: "center" }}>Actions</div>
             </div>

@@ -8,8 +8,8 @@ import { dbErr } from "@/server/db-error";
 
 const ALLOWED_INFLUENCER_FIELDS = new Set([
   "link", "platform", "status", "archive_date",
-  "touch_1", "touch_2", "touch_3",
-  "touch_1_date", "touch_2_date", "touch_3_date",
+  "touch_1", "touch_2", "touch_3", "touch_4",
+  "touch_1_date", "touch_2_date", "touch_3_date", "touch_4_date",
   "notes", "replied",
 ]);
 
@@ -37,12 +37,12 @@ export async function createInfluencer(formData: FormData) {
 
 export async function setTouch(
   id: string,
-  touch: "touch_1" | "touch_2" | "touch_3",
+  touch: "touch_1" | "touch_2" | "touch_3" | "touch_4",
   checked: boolean
 ) {
   const db = createServerClient();
   const today = todayStr();
-  const dateField = `${touch}_date` as "touch_1_date" | "touch_2_date" | "touch_3_date";
+  const dateField = `${touch}_date` as "touch_1_date" | "touch_2_date" | "touch_3_date" | "touch_4_date";
   const update: Record<string, boolean | string | null> = {
     [touch]: checked,
     [dateField]: checked ? today : null,
@@ -156,9 +156,11 @@ export async function reEngageInfluencer(id: string) {
     touch_1: false,
     touch_2: false,
     touch_3: false,
+    touch_4: false,
     touch_1_date: null,
     touch_2_date: null,
     touch_3_date: null,
+    touch_4_date: null,
     archive_date: null,
   }).eq("id", id);
 

@@ -15,6 +15,8 @@ export interface Company {
   follow_up_date: string | null;
   follow_up_2_date: string | null;
   follow_up_3_date: string | null;
+  follow_up_4_date: string | null;
+  archive_date: string | null;
   status: CompanyStatus;
   reply_notes: string | null;
   archived: boolean;
@@ -46,9 +48,11 @@ export interface Influencer {
   touch_1: boolean;
   touch_2: boolean;
   touch_3: boolean;
+  touch_4: boolean;
   touch_1_date: string | null;
   touch_2_date: string | null;
   touch_3_date: string | null;
+  touch_4_date: string | null;
   status: InfluencerStatus;
   archive_date: string | null;
   cycle_count: number;
