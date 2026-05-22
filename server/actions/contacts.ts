@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerClient } from "@/lib/supabase/server";
 import { z } from "zod";
+import type { Contact } from "@/lib/supabase/types";
 import { dbErr } from "@/server/db-error";
 
 const ALLOWED_CONTACT_FIELDS = new Set([
@@ -21,6 +22,34 @@ const ContactSchema = z.object({
   email_copy_used: z.string().optional().nullable(),
   dm_copy_used: z.string().optional().nullable(),
 });
+
+export async function getCompanyContacts(companyId: string): Promise<Contact[]> {
+  const db = createServerClient();
+  const { data } = await db
+    .from("contacts")
+    .select("*")
+    .eq("company_id", companyId)
+    .or("archived.is.null,archived.eq.false")
+    .order("created_at");
+  return data ?? [];
+}
+
+export async function getAllContactsByCompany(companyIds: string[]): Promise<Record<string, Contact[]>> {
+  if (!companyIds.length) return {};
+  const db = createServerClient();
+  const { data } = await db
+    .from("contacts")
+    .select("*")
+    .in("company_id", companyIds)
+    .or("archived.is.null,archived.eq.false")
+    .order("created_at");
+  const result: Record<string, Contact[]> = {};
+  for (const c of (data ?? [])) {
+    if (!result[c.company_id]) result[c.company_id] = [];
+    result[c.company_id].push(c);
+  }
+  return result;
+}
 
 export async function bulkCreateContacts(
   companyId: string,

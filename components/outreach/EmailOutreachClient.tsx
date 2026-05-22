@@ -18,7 +18,7 @@ import {
   createCompany,
   importCompanies,
 } from "@/server/actions/companies";
-import { createContact, bulkCreateContacts, deleteContact, updateContactField } from "@/server/actions/contacts";
+import { createContact, bulkCreateContacts, deleteContact, updateContactField, getCompanyContacts, getAllContactsByCompany } from "@/server/actions/contacts";
 import type { Company, Contact } from "@/lib/supabase/types";
 import { Plus, Upload, X, ExternalLink, ArchiveRestore, Trash2, RotateCcw, Archive } from "lucide-react";
 import { MobileActionsPortal, MobileMoreMenu } from "@/components/shell/MobileActionsPortal";
@@ -29,7 +29,6 @@ type Sort = "oldest" | "newest" | "az";
 
 interface Props {
   companies: CompanyWithDue[];
-  contactsByCompany: Record<string, Contact[]>;
 }
 
 const FILTERS = [
@@ -461,17 +460,17 @@ function parsePastedContacts(text: string) {
 /* ─── Contact slide-over ──────────────────────────────────────────────── */
 function CompanySlideOver({
   company,
-  contacts,
   onClose,
   startAddContact,
   onPermDelete,
 }: {
   company: CompanyWithDue;
-  contacts: Contact[];
   onClose: () => void;
   startAddContact: boolean;
   onPermDelete: (id: string) => void;
 }) {
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [loadingContacts, setLoadingContacts] = useState(true);
   const [showAdd, setShowAdd] = useState(startAddContact);
   const [showPaste, setShowPaste] = useState(false);
   const [pasteText, setPasteText] = useState("");
@@ -482,6 +481,19 @@ function CompanySlideOver({
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
   const nameRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setLoadingContacts(true);
+    getCompanyContacts(company.id).then((data) => {
+      setContacts(data);
+      setLoadingContacts(false);
+    });
+  }, [company.id]);
+
+  async function reloadContacts() {
+    const data = await getCompanyContacts(company.id);
+    setContacts(data);
+  }
 
   function startEdit(ct: Contact) {
     setEditingId(ct.id);
@@ -499,7 +511,7 @@ function CompanySlideOver({
         updateContactField(id, "linkedin_url", editDraft.linkedin_url || null),
       ]);
       setEditingId(null);
-      router.refresh();
+      await reloadContacts();
     });
   }
 
@@ -510,7 +522,7 @@ function CompanySlideOver({
     startTransition(async () => {
       await createContact(fd);
       setShowAdd(false);
-      router.refresh();
+      await reloadContacts();
     });
   }
 
@@ -532,7 +544,7 @@ function CompanySlideOver({
       setShowPaste(false);
       setPasteText("");
       setPastePreview([]);
-      router.refresh();
+      await reloadContacts();
     } catch (err) {
       alert("Import error: " + String(err));
     } finally {
@@ -544,7 +556,7 @@ function CompanySlideOver({
     startTransition(async () => {
       await deleteContact(id);
       if (editingId === id) setEditingId(null);
-      router.refresh();
+      await reloadContacts();
     });
   }
 
@@ -641,7 +653,7 @@ function CompanySlideOver({
           {/* Contacts */}
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 }}>Contacts · {contacts.length}</div>
+              <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 }}>Contacts{loadingContacts ? " …" : ` · ${contacts.length}`}</div>
               <div style={{ display: "flex", gap: 6 }}>
                 <button
                   onClick={() => { setShowPaste((v) => { if (!v) setShowAdd(false); return !v; }); setPasteText(""); setPastePreview([]); }}
@@ -1129,7 +1141,7 @@ function parseCSV(text: string) {
 }
 
 /* ─── Main ────────────────────────────────────────────────────────────── */
-export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
+export function EmailOutreachClient({ companies }: Props) {
   const [filter, setFilter] = useState<Filter>("not_started");
   const [sort, setSort] = useState<Sort>("oldest");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -1204,11 +1216,12 @@ export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
     });
   }
 
-  function handleExport() {
+  async function handleExport() {
     const compCols = ["name","url","industry","status","outreach_date","follow_up_date","reply_notes"];
     const ctxCols = ["contact_name","contact_role","contact_email","contact_linkedin","contact_x","contact_phone"];
     const headers = [...compCols, ...ctxCols];
     const q = (v: unknown) => { const s = sanitizeCsvCell(String(v ?? "")); return `"${s.replace(/"/g, '""')}"`; };
+    const contactsByCompany = await getAllContactsByCompany(companies.map((c) => c.id));
     const rows: string[] = [];
     for (const c of companies) {
       const contacts = contactsByCompany[c.id] ?? [];
@@ -1356,7 +1369,7 @@ export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
                   <CompanyRow
                     key={company.id}
                     company={company}
-                    contacts={contactsByCompany[company.id] ?? []}
+                    contacts={[]}
                     num={i + 1}
                     selected={selectedIds.has(company.id)}
                     onSelect={handleSelect}
@@ -1376,7 +1389,6 @@ export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
       {detail && (
         <CompanySlideOver
           company={detail.company}
-          contacts={contactsByCompany[detail.company.id] ?? []}
           onClose={() => setDetail(null)}
           startAddContact={detail.addContact}
           onPermDelete={(id) => { setDetail(null); setConfirmDeleteId(id); }}
