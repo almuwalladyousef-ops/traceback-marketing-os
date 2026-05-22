@@ -13,7 +13,6 @@ import {
 } from "@/server/actions/personal";
 import type { PersonalLead } from "@/lib/supabase/types";
 import { addDaysStr } from "@/lib/date";
-import { getBrowserClient } from "@/lib/supabase/browser";
 import { MobileActionsPortal, MobileMoreMenu } from "@/components/shell/MobileActionsPortal";
 
 type Lead = PersonalLead & { due: boolean; dueArchive: boolean };
@@ -430,23 +429,12 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [sort, setSort] = useState<"newest" | "oldest" | "az">("newest");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [page, setPage] = useState(0);
   const [, startTransition] = useTransition();
+  const PAGE_SIZE = 50;
 
   const today = todayProp ?? new Date().toISOString().split("T")[0];
 
-  // Realtime subscription
-  useEffect(() => {
-    const supabase = getBrowserClient();
-    const channel = supabase
-      .channel("personal-leads-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "personal_leads" }, () => {
-        router.refresh();
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [router]);
-
-  // Sync with server on refresh
   useEffect(() => { setLeads(initialLeads); }, [initialLeads]);
 
   const SORT_CYCLE: Record<string, "newest" | "oldest" | "az"> = { newest: "oldest", oldest: "az", az: "newest" };
@@ -591,7 +579,9 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
     });
   }, [leads, filter, sort, today]);
 
-  const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l.id));
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const allSelected = paginated.length > 0 && paginated.every((l) => selected.has(l.id));
 
   return (
     <div className="fade-in">
@@ -630,7 +620,7 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
         {P_FILTERS.map((f) => {
           const isActive = filter === f.id;
           return (
-            <button key={f.id} onClick={() => { setFilter(f.id); setSelected(new Set()); setFiltersOpen(false); }} style={{
+            <button key={f.id} onClick={() => { setFilter(f.id); setPage(0); setSelected(new Set()); setFiltersOpen(false); }} style={{
               display: "inline-flex", alignItems: "center", gap: 7,
               padding: "6px 12px", borderRadius: 7, whiteSpace: "nowrap",
               background: isActive ? "var(--surface-2)" : "transparent",
@@ -646,7 +636,7 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
           );
         })}
         <div style={{ flex: 1 }}/>
-        <button className="filter-sort-btn" onClick={() => setSort((s) => SORT_CYCLE[s])} style={{
+        <button className="filter-sort-btn" onClick={() => { setSort((s) => SORT_CYCLE[s]); setPage(0); }} style={{
           padding: "6px 10px", fontSize: 12, color: "var(--text-muted)",
           background: "transparent", border: "1px solid var(--border)", borderRadius: 7,
           display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer",
@@ -713,7 +703,7 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
               textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600, alignItems: "center",
             }}>
               <div style={{ display: "flex", justifyContent: "center" }}>
-                <button onClick={() => setSelected(allSelected ? new Set() : new Set(filtered.map((l) => l.id)))} style={{
+                <button onClick={() => setSelected(allSelected ? new Set() : new Set(paginated.map((l) => l.id)))} style={{
                   width: 16, height: 16, borderRadius: 4,
                   border: "1px solid " + (allSelected ? "var(--accent)" : "var(--border-strong)"),
                   background: allSelected ? "var(--accent)" : "transparent",
@@ -739,9 +729,9 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
                 <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Try a different filter or add a lead.</div>
               </div>
             ) : (
-              filtered.map((lead, i) => (
+              paginated.map((lead, i) => (
                 <LeadRow
-                  key={lead.id} lead={lead} num={i + 1} today={today}
+                  key={lead.id} lead={lead} num={page * PAGE_SIZE + i + 1} today={today}
                   selected={selected.has(lead.id)}
                   onSelect={selectOne}
                   onUpdate={updateLocal}
@@ -753,6 +743,14 @@ export function PersonalOutreachClient({ leads: initialLeads, today: todayProp }
           </div>
         </div>
       </div>
+
+      {totalPages > 1 && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 16, fontSize: 12.5, color: "var(--text-muted)" }}>
+          <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} style={{ padding: "5px 12px", borderRadius: 7, background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)", cursor: page === 0 ? "not-allowed" : "pointer", opacity: page === 0 ? 0.4 : 1, fontSize: 12 }}>← Prev</button>
+          <span className="mono">Page {page + 1} of {totalPages} · {filtered.length} total</span>
+          <button onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} style={{ padding: "5px 12px", borderRadius: 7, background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)", cursor: page >= totalPages - 1 ? "not-allowed" : "pointer", opacity: page >= totalPages - 1 ? 0.4 : 1, fontSize: 12 }}>Next →</button>
+        </div>
+      )}
 
       {confirmBulkDelete && (
         <>

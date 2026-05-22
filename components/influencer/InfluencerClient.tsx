@@ -18,7 +18,6 @@ import {
   importInfluencers,
 } from "@/server/actions/influencers";
 import type { Influencer } from "@/lib/supabase/types";
-import { getBrowserClient } from "@/lib/supabase/browser";
 import { MobileActionsPortal, MobileMoreMenu } from "@/components/shell/MobileActionsPortal";
 
 type InfWithDue = Influencer & { dueTouch: "touch_1" | "touch_2" | "touch_3" | "touch_4" | "re_engage" | null; dueArchive: boolean };
@@ -537,19 +536,10 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
   const [isPendingImport, startImport] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 50;
 
   const today = todayProp ?? new Date().toISOString().split("T")[0];
-
-  useEffect(() => {
-    const supabase = getBrowserClient();
-    const channel = supabase
-      .channel("influencers-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "influencers" }, () => {
-        router.refresh();
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [router]);
 
   useEffect(() => { setInfluencers(initialInfluencers); }, [initialInfluencers]);
 
@@ -703,7 +693,9 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
   }
 
   const filtered = useMemo(() => getFiltered(influencers, touchFilter, platformFilter), [influencers, touchFilter, platformFilter]);
-  const allSelected = filtered.length > 0 && filtered.every((i) => selected.has(i.id));
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const allSelected = paginated.length > 0 && paginated.every((i) => selected.has(i.id));
 
   return (
     <div className="fade-in">
@@ -741,7 +733,7 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
           const isActive = touchFilter === f.id;
           const count = getFiltered(influencers, f.id, platformFilter).length;
           return (
-            <button key={f.id} onClick={() => { setTouchFilter(f.id); setSelected(new Set()); setFiltersOpen(false); }} style={{
+            <button key={f.id} onClick={() => { setTouchFilter(f.id); setPage(0); setSelected(new Set()); setFiltersOpen(false); }} style={{
               display: "inline-flex", alignItems: "center", gap: 7,
               padding: "6px 12px", borderRadius: 7, whiteSpace: "nowrap",
               background: isActive ? "var(--surface-2)" : "transparent",
@@ -759,7 +751,7 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
         <div style={{ flex: 1 }}/>
         <div style={{ display: "flex", gap: 3, padding: "3px 3px 3px 0" }}>
           {["All", "IG", "X"].map((p) => (
-            <button key={p} onClick={() => setPlatformFilter(p)} style={{
+            <button key={p} onClick={() => { setPlatformFilter(p); setPage(0); }} style={{
               padding: "5px 10px", borderRadius: 6, fontSize: 12, fontWeight: platformFilter === p ? 500 : 400,
               background: platformFilter === p ? "var(--surface-2)" : "transparent",
               color: platformFilter === p ? "var(--text)" : "var(--text-muted)",
@@ -829,7 +821,7 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
               alignItems: "center",
             }}>
               <div style={{ display: "flex", justifyContent: "center" }}>
-                <button onClick={() => setSelected(allSelected ? new Set() : new Set(filtered.map((i) => i.id)))} style={{
+                <button onClick={() => setSelected(allSelected ? new Set() : new Set(paginated.map((i) => i.id)))} style={{
                   width: 16, height: 16, borderRadius: 4,
                   border: "1px solid " + (allSelected ? "var(--accent)" : "var(--border-strong)"),
                   background: allSelected ? "var(--accent)" : "transparent",
@@ -856,9 +848,9 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
                 <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Try a different filter or add one.</div>
               </div>
             ) : (
-              filtered.map((inf, i) => (
+              paginated.map((inf, i) => (
                 <InfluencerRow
-                  key={inf.id} inf={inf} num={i + 1} today={today}
+                  key={inf.id} inf={inf} num={page * PAGE_SIZE + i + 1} today={today}
                   selected={selected.has(inf.id)}
                   onSelect={selectOne}
                   onFieldUpdate={updateField}
@@ -875,6 +867,14 @@ export function InfluencerClient({ influencers: initialInfluencers, today: today
           </div>
         </div>
       </div>
+
+      {totalPages > 1 && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 16, fontSize: 12.5, color: "var(--text-muted)" }}>
+          <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} style={{ padding: "5px 12px", borderRadius: 7, background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)", cursor: page === 0 ? "not-allowed" : "pointer", opacity: page === 0 ? 0.4 : 1, fontSize: 12 }}>← Prev</button>
+          <span className="mono">Page {page + 1} of {totalPages} · {filtered.length} total</span>
+          <button onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} style={{ padding: "5px 12px", borderRadius: 7, background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)", cursor: page >= totalPages - 1 ? "not-allowed" : "pointer", opacity: page >= totalPages - 1 ? 0.4 : 1, fontSize: 12 }}>Next →</button>
+        </div>
+      )}
 
       {confirmBulkDelete && (
         <>
