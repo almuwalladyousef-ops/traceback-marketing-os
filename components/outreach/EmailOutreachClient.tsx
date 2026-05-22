@@ -908,7 +908,6 @@ function CompanyRow({
   function save(field: string, value: string | null) {
     startTransition(async () => {
       await updateCompanyField(company.id, field as keyof typeof vals, value);
-      router.refresh();
     });
   }
 
