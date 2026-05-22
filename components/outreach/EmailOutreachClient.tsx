@@ -29,7 +29,6 @@ type Sort = "oldest" | "newest" | "az";
 
 interface Props {
   companies: CompanyWithDue[];
-  contactsByCompany: Record<string, Contact[]>;
 }
 
 const FILTERS = [
@@ -1139,11 +1138,16 @@ function parseCSV(text: string) {
 }
 
 /* ─── Main ────────────────────────────────────────────────────────────── */
-export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
+export function EmailOutreachClient({ companies }: Props) {
   const [filter, setFilter] = useState<Filter>("not_started");
   const [sort, setSort] = useState<Sort>("oldest");
   const [page, setPage] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [contactsByCompany, setContactsByCompany] = useState<Record<string, Contact[]>>({});
+
+  useEffect(() => {
+    getAllContactsByCompany(companies.map((c) => c.id)).then(setContactsByCompany);
+  }, []);
   const [showNew, setShowNew] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const PAGE_SIZE = 50;
