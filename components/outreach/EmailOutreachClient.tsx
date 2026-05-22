@@ -43,8 +43,8 @@ const FILTERS = [
   { id: "deleted" as Filter, label: "Deleted", icon: "✕" },
 ];
 
-const COLS = "36px 44px 200px 130px 80px 80px 80px 80px 80px 140px 160px 180px 1fr 70px";
-const MIN_WIDTH = "1430px";
+const COLS = "36px 44px 200px 130px 80px 80px 80px 80px 80px 140px 130px 140px 180px 80px";
+const MIN_WIDTH = "1520px";
 
 const TODAY = new Date().toISOString().split("T")[0];
 
@@ -329,9 +329,9 @@ function ContactChips({ contacts, onOpen, onAdd }: { contacts: Contact[]; onOpen
   const show = contacts.slice(0, 3);
   const extra = contacts.length - show.length;
   return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, flexWrap: "nowrap" }}>
       {contacts.length > 0 && (
-        <button onClick={onOpen} style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center" }}>
+        <button onClick={onOpen} style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center", flexShrink: 0 }}>
           {show.map((c, i) => (
             <div key={c.id} title={c.name} style={{
               width: 24, height: 24, borderRadius: "50%",
@@ -382,20 +382,20 @@ function EmailMessagesPanel({ companyId }: { companyId: string }) {
   }
 
   return (
-    <div style={{ display: "flex", justifyContent: "center" }}>
+    <div style={{ display: "flex", justifyContent: "center", padding: "0 6px" }}>
       <button
         onClick={() => setOpen((v) => !v)}
         title="Message"
         style={{
-          fontSize: 10.5, padding: "3px 8px", borderRadius: 5,
-          background: hasText ? "var(--accent-dim)" : "var(--surface-3)",
-          color: hasText ? "var(--accent)" : "var(--text-dim)",
+          fontSize: 11.5, padding: "5px 12px", borderRadius: 7,
+          background: hasText ? "var(--accent-dim)" : "transparent",
+          color: hasText ? "var(--accent)" : "var(--text-muted)",
           border: "1px solid " + (hasText ? "var(--accent-line)" : "var(--border)"),
-          cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4,
-          transition: "all 0.12s",
+          cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+          transition: "all 0.12s", width: "100%", fontWeight: 500,
         }}
       >
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
         </svg>
         {hasText ? "Msgs ✓" : "Msgs"}
@@ -1019,18 +1019,16 @@ function CompanyRow({
       </div>
 
       {/* contacts */}
-      <div style={{ paddingLeft: 42 }}>
-        <ContactChips
-          contacts={contacts}
-          onOpen={() => onOpenDetail(company, false)}
-          onAdd={() => onOpenDetail(company, true)}
-        />
-      </div>
+      <ContactChips
+        contacts={contacts}
+        onOpen={() => onOpenDetail(company, false)}
+        onAdd={() => onOpenDetail(company, true)}
+      />
 
       <EmailMessagesPanel companyId={company.id}/>
 
       {/* reply notes */}
-      <div style={{ paddingRight: 12, paddingLeft: 42 }}>
+      <div style={{ paddingRight: 8, paddingLeft: 8 }}>
         <InlineEdit value={vals.reply_notes} onSave={(v) => { setVals((p) => ({ ...p, reply_notes: v })); save("reply_notes", v); }} placeholder="Notes…" multiline disabled={dimmed} textStyle={{ fontSize: 12.5, lineHeight: 1.4 }}/>
       </div>
 
@@ -1143,9 +1141,11 @@ function parseCSV(text: string) {
 export function EmailOutreachClient({ companies }: Props) {
   const [filter, setFilter] = useState<Filter>("not_started");
   const [sort, setSort] = useState<Sort>("oldest");
+  const [page, setPage] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showNew, setShowNew] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const PAGE_SIZE = 50;
   const [detail, setDetail] = useState<{ company: CompanyWithDue; addContact: boolean } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
@@ -1196,7 +1196,9 @@ export function EmailOutreachClient({ companies }: Props) {
       return sort === "newest" ? da - db : db - da;
     });
 
-  const allSelected = filtered.length > 0 && filtered.every((c) => selectedIds.has(c.id));
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const allSelected = paginated.length > 0 && paginated.every((c) => selectedIds.has(c.id));
 
   function handleSelect(id: string, checked: boolean) {
     setSelectedIds((prev) => { const n = new Set(prev); checked ? n.add(id) : n.delete(id); return n; });
@@ -1274,10 +1276,10 @@ export function EmailOutreachClient({ companies }: Props) {
         <FilterRow
           className={`filter-row${filtersOpen ? " open" : ""}`}
           filter={filter}
-          setFilter={(f) => { setFilter(f); setSelectedIds(new Set()); setFiltersOpen(false); }}
+          setFilter={(f) => { setFilter(f); setPage(0); setSelectedIds(new Set()); setFiltersOpen(false); }}
           counts={counts}
           sort={sort}
-          onSortCycle={() => setSort((s) => SORT_CYCLE[s])}
+          onSortCycle={() => { setSort((s) => SORT_CYCLE[s]); setPage(0); }}
         />
 
         {/* Toolbar */}
@@ -1335,7 +1337,7 @@ export function EmailOutreachClient({ companies }: Props) {
                 alignItems: "center",
               }}>
                 <div style={{ display: "flex", justifyContent: "center" }}>
-                  <button onClick={() => setSelectedIds(allSelected ? new Set() : new Set(filtered.map((c) => c.id)))} style={{
+                  <button onClick={() => setSelectedIds(allSelected ? new Set() : new Set(paginated.map((c) => c.id)))} style={{
                     width: 16, height: 16, borderRadius: 4,
                     border: "1px solid " + (allSelected ? "var(--accent)" : "var(--border-strong)"),
                     background: allSelected ? "var(--accent)" : "transparent",
@@ -1351,9 +1353,9 @@ export function EmailOutreachClient({ companies }: Props) {
                 <div style={{ textAlign: "center" }}>Bump 3</div>
                 <div style={{ textAlign: "center" }}>Close</div>
                 <div style={{ textAlign: "center" }}>Status</div>
-                <div style={{ paddingLeft: 42 }}>Contacts</div>
+                <div style={{ textAlign: "center" }}>Contacts</div>
                 <div style={{ textAlign: "center" }}>Msgs</div>
-                <div style={{ paddingLeft: 42 }}>Reply notes</div>
+                <div style={{ paddingLeft: 8 }}>Reply notes</div>
                 <div style={{ textAlign: "center" }}>Actions</div>
               </div>
 
@@ -1364,12 +1366,12 @@ export function EmailOutreachClient({ companies }: Props) {
                   <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Try a different filter or add a company.</div>
                 </div>
               ) : (
-                filtered.map((company, i) => (
+                paginated.map((company, i) => (
                   <CompanyRow
                     key={company.id}
                     company={company}
                     contacts={[]}
-                    num={i + 1}
+                    num={page * PAGE_SIZE + i + 1}
                     selected={selectedIds.has(company.id)}
                     onSelect={handleSelect}
                     onOpenDetail={(c, add) => setDetail({ company: c, addContact: add })}
@@ -1381,6 +1383,22 @@ export function EmailOutreachClient({ companies }: Props) {
             </div>
           </div>
         </div>
+
+        {totalPages > 1 && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 16, fontSize: 12.5, color: "var(--text-muted)" }}>
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+              style={{ padding: "5px 12px", borderRadius: 7, background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)", cursor: page === 0 ? "not-allowed" : "pointer", opacity: page === 0 ? 0.4 : 1, fontSize: 12 }}
+            >← Prev</button>
+            <span className="mono">Page {page + 1} of {totalPages} · {filtered.length} total</span>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={page >= totalPages - 1}
+              style={{ padding: "5px 12px", borderRadius: 7, background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)", cursor: page >= totalPages - 1 ? "not-allowed" : "pointer", opacity: page >= totalPages - 1 ? 0.4 : 1, fontSize: 12 }}
+            >Next →</button>
+          </div>
+        )}
       </div>
 
       <input ref={fileInputRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleFileChange}/>
