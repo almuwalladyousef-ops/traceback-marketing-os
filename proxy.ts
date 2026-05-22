@@ -5,7 +5,6 @@ import { COOKIE_NAME, verifyAuthToken } from "@/lib/auth";
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isLoginPage = pathname === "/login";
-
   const token = request.cookies.get(COOKIE_NAME)?.value;
   const authenticated = token ? await verifyAuthToken(token) : false;
 

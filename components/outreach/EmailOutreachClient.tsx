@@ -18,7 +18,7 @@ import {
   createCompany,
   importCompanies,
 } from "@/server/actions/companies";
-import { createContact, deleteContact, updateContactField } from "@/server/actions/contacts";
+import { createContact, bulkCreateContacts, deleteContact, updateContactField } from "@/server/actions/contacts";
 import type { Company, Contact } from "@/lib/supabase/types";
 import { Plus, Upload, X, ExternalLink, ArchiveRestore, Trash2, RotateCcw, Archive } from "lucide-react";
 import { MobileActionsPortal, MobileMoreMenu } from "@/components/shell/MobileActionsPortal";
@@ -44,7 +44,7 @@ const FILTERS = [
   { id: "deleted" as Filter, label: "Deleted", icon: "✕" },
 ];
 
-const COLS = "36px 44px 200px 130px 80px 80px 80px 80px 80px 130px 170px 70px 1fr 70px";
+const COLS = "36px 44px 200px 130px 80px 80px 80px 80px 80px 140px 160px 180px 1fr 70px";
 const MIN_WIDTH = "1430px";
 
 const TODAY = new Date().toISOString().split("T")[0];
@@ -330,39 +330,31 @@ function ContactChips({ contacts, onOpen, onAdd }: { contacts: Contact[]; onOpen
   const show = contacts.slice(0, 3);
   const extra = contacts.length - show.length;
   return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
       {contacts.length > 0 && (
-        <>
-          <div style={{ display: "flex" }}>
-            {show.map((c, i) => (
-              <div key={c.id} title={c.name} style={{
-                width: 24, height: 24, borderRadius: "50%",
-                background: "var(--surface-3)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 9.5, fontWeight: 600, color: "var(--text-muted)",
-                marginLeft: i === 0 ? 0 : -6,
-                border: "2px solid var(--surface)",
-              }}>
-                {c.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
-              </div>
-            ))}
-            {extra > 0 && (
-              <div style={{
-                width: 24, height: 24, borderRadius: "50%",
-                background: "var(--surface-3)", marginLeft: -6,
-                border: "2px solid var(--surface)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 10, fontWeight: 600, color: "var(--text-muted)",
-              }}>+{extra}</div>
-            )}
-          </div>
-          <button onClick={onOpen} style={{
-            background: "transparent", border: "none", padding: "2px 4px",
-            color: "var(--text-muted)", fontSize: 11.5, fontWeight: 500, cursor: "pointer",
-          }}>
-            {contacts.length === 1 ? contacts[0].name : `${contacts.length} contacts`}
-          </button>
-        </>
+        <button onClick={onOpen} style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center" }}>
+          {show.map((c, i) => (
+            <div key={c.id} title={c.name} style={{
+              width: 24, height: 24, borderRadius: "50%",
+              background: "var(--surface-3)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 9.5, fontWeight: 600, color: "var(--text-muted)",
+              marginLeft: i === 0 ? 0 : -6,
+              border: "2px solid var(--surface)",
+            }}>
+              {c.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+            </div>
+          ))}
+          {extra > 0 && (
+            <div style={{
+              width: 24, height: 24, borderRadius: "50%",
+              background: "var(--surface-3)", marginLeft: -6,
+              border: "2px solid var(--surface)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 10, fontWeight: 600, color: "var(--text-muted)",
+            }}>+{extra}</div>
+          )}
+        </button>
       )}
       <button onClick={onAdd} title="Add contact" style={{
         width: 22, height: 22, borderRadius: 6,
@@ -445,6 +437,27 @@ function EmailMessagesPanel({ companyId }: { companyId: string }) {
   );
 }
 
+/* ─── Paste contacts parser ───────────────────────────────────────────── */
+function parsePastedContacts(text: string) {
+  const blocks = text.trim().split(/\n[ \t]*\n/);
+  return blocks.map((block) => {
+    const lines = block.trim().split("\n");
+    const get = (key: string) => {
+      const line = lines.find((l) => l.toLowerCase().startsWith(key.toLowerCase() + ":"));
+      if (!line) return "";
+      return line.slice(line.indexOf(":") + 1).trim();
+    };
+    return {
+      name: get("name"),
+      role: get("role"),
+      email: get("email"),
+      phone: get("phone"),
+      x_handle: get("x"),
+      linkedin_url: get("linkedin"),
+    };
+  }).filter((c) => c.name);
+}
+
 /* ─── Contact slide-over ──────────────────────────────────────────────── */
 function CompanySlideOver({
   company,
@@ -460,6 +473,10 @@ function CompanySlideOver({
   onPermDelete: (id: string) => void;
 }) {
   const [showAdd, setShowAdd] = useState(startAddContact);
+  const [showPaste, setShowPaste] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+  const [pastePreview, setPastePreview] = useState<ReturnType<typeof parsePastedContacts>>([]);
+  const [isImporting, setIsImporting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
@@ -495,6 +512,32 @@ function CompanySlideOver({
       setShowAdd(false);
       router.refresh();
     });
+  }
+
+  function handlePasteChange(text: string) {
+    setPasteText(text);
+    setPastePreview(parsePastedContacts(text));
+  }
+
+  async function handlePasteImport() {
+    const parsed = parsePastedContacts(pasteText);
+    if (!parsed.length) return;
+    setIsImporting(true);
+    try {
+      const result = await bulkCreateContacts(company.id, parsed);
+      if (result && "error" in result) {
+        alert("Import failed: " + result.error);
+        return;
+      }
+      setShowPaste(false);
+      setPasteText("");
+      setPastePreview([]);
+      router.refresh();
+    } catch (err) {
+      alert("Import error: " + String(err));
+    } finally {
+      setIsImporting(false);
+    }
   }
 
   function handleDelete(id: string) {
@@ -599,21 +642,83 @@ function CompanySlideOver({
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 }}>Contacts · {contacts.length}</div>
-              <button
-                onClick={() => { setShowAdd((v) => !v); setTimeout(() => nameRef.current?.focus(), 0); }}
-                style={{
-                  fontSize: 11.5, background: showAdd ? "var(--accent-dim)" : "transparent",
-                  color: showAdd ? "var(--accent)" : "var(--text-muted)",
-                  border: "1px solid " + (showAdd ? "var(--accent-line)" : "var(--border)"),
-                  borderRadius: 6, padding: "4px 9px",
-                  display: "inline-flex", alignItems: "center", gap: 5,
-                  cursor: "pointer", transition: "all 0.15s",
-                }}
-              >
-                <Plus size={11} style={{ transform: showAdd ? "rotate(45deg)" : "none", transition: "transform 0.15s" }}/>
-                {showAdd ? "Cancel" : "Add contact"}
-              </button>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  onClick={() => { setShowPaste((v) => { if (!v) setShowAdd(false); return !v; }); setPasteText(""); setPastePreview([]); }}
+                  title="Paste multiple contacts at once"
+                  style={{
+                    fontSize: 11.5, background: showPaste ? "color-mix(in oklch, var(--text-muted) 15%, transparent)" : "transparent",
+                    color: showPaste ? "var(--text)" : "var(--text-muted)",
+                    border: "1px solid " + (showPaste ? "var(--border-strong)" : "var(--border)"),
+                    borderRadius: 6, padding: "4px 9px",
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                    cursor: "pointer", transition: "all 0.15s",
+                  }}
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M8 6H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-2"/><path d="M10 12h4M10 16h4"/></svg>
+                  {showPaste ? "Cancel" : "Paste"}
+                </button>
+                <button
+                  onClick={() => { setShowAdd((v) => !v); if (!showAdd) setShowPaste(false); setTimeout(() => nameRef.current?.focus(), 0); }}
+                  style={{
+                    fontSize: 11.5, background: showAdd ? "var(--accent-dim)" : "transparent",
+                    color: showAdd ? "var(--accent)" : "var(--text-muted)",
+                    border: "1px solid " + (showAdd ? "var(--accent-line)" : "var(--border)"),
+                    borderRadius: 6, padding: "4px 9px",
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                    cursor: "pointer", transition: "all 0.15s",
+                  }}
+                >
+                  <Plus size={11} style={{ transform: showAdd ? "rotate(45deg)" : "none", transition: "transform 0.15s" }}/>
+                  {showAdd ? "Cancel" : "Add contact"}
+                </button>
+              </div>
             </div>
+
+            {showPaste && (
+              <div style={{
+                marginBottom: 12, padding: 14,
+                background: "var(--surface-2)", border: "1px solid var(--border)",
+                borderRadius: 9, display: "flex", flexDirection: "column", gap: 10,
+              }}>
+                <div style={{ fontSize: 11.5, color: "var(--text-muted)", fontWeight: 500 }}>Paste contacts</div>
+                <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5 }}>
+                  Paste one or more contacts separated by a blank line. Each block should have: <span style={{ fontFamily: "JetBrains Mono, monospace" }}>Name:</span>, <span style={{ fontFamily: "JetBrains Mono, monospace" }}>Role:</span>, <span style={{ fontFamily: "JetBrains Mono, monospace" }}>Email:</span>, etc.
+                </div>
+                <textarea
+                  value={pasteText}
+                  onChange={(e) => handlePasteChange(e.target.value)}
+                  placeholder={"Name: Jane Smith\nRole: CEO\nEmail: jane@company.com\nPhone: \nX: @janesmith\nLinkedIn: linkedin.com/in/janesmith\n\nName: John Doe\nRole: CTO\nEmail: john@company.com\n..."}
+                  rows={10}
+                  style={{
+                    width: "100%", resize: "vertical",
+                    background: "var(--surface)", border: "1px solid var(--border)",
+                    borderRadius: 6, padding: "8px 10px",
+                    color: "var(--text)", fontSize: 12,
+                    fontFamily: "JetBrains Mono, ui-monospace, monospace",
+                    lineHeight: 1.6, outline: "none", whiteSpace: "pre", boxSizing: "border-box",
+                  }}
+                  onFocus={(e) => (e.target.style.borderColor = "var(--accent-line)")}
+                  onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+                />
+                {pastePreview.length > 0 && (
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                    <span style={{ color: "var(--accent)", fontWeight: 600 }}>{pastePreview.length}</span> contact{pastePreview.length !== 1 ? "s" : ""} detected: {pastePreview.map((c) => c.name).join(", ")}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={handlePasteImport}
+                    disabled={isImporting || pastePreview.length === 0}
+                    style={{ padding: "6px 14px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, background: "var(--accent)", color: "#1a1208", border: "none", cursor: (isImporting || pastePreview.length === 0) ? "not-allowed" : "pointer", opacity: (isImporting || pastePreview.length === 0) ? 0.5 : 1, boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2)" }}
+                  >
+                    {isImporting ? "Importing…" : `Import ${pastePreview.length > 0 ? pastePreview.length : ""} contact${pastePreview.length !== 1 ? "s" : ""}`}
+                  </button>
+                  <button type="button" onClick={() => { setShowPaste(false); setPasteText(""); setPastePreview([]); }} style={{ padding: "6px 12px", borderRadius: 7, fontSize: 12.5, background: "transparent", color: "var(--text-muted)", border: "1px solid var(--border)", cursor: "pointer" }}>Cancel</button>
+                </div>
+              </div>
+            )}
 
             {showAdd && (
               <form onSubmit={handleAdd} style={{
@@ -871,7 +976,7 @@ function CompanyRow({
       <div className="mono" style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "center" }}>{String(num).padStart(2, "0")}</div>
 
       {/* company + industry stacked */}
-      <div style={{ paddingRight: 16, paddingLeft: 4 }}>
+      <div style={{ paddingRight: 1, paddingLeft: 4 }}>
         <InlineEdit value={vals.name} onSave={(v) => { setVals((p) => ({ ...p, name: v })); save("name", v); }} placeholder="Company name" disabled={dimmed} textStyle={{ fontWeight: 500, fontSize: 13.5, color: "var(--text)" }}/>
         <InlineEdit value={vals.industry} onSave={(v) => { setVals((p) => ({ ...p, industry: v })); save("industry", v); }} placeholder="Industry" disabled={dimmed} textStyle={{ fontSize: 11, color: "var(--text-muted)" }}/>
       </div>
@@ -903,7 +1008,7 @@ function CompanyRow({
       </div>
 
       {/* contacts */}
-      <div>
+      <div style={{ paddingLeft: 42 }}>
         <ContactChips
           contacts={contacts}
           onOpen={() => onOpenDetail(company, false)}
@@ -914,7 +1019,7 @@ function CompanyRow({
       <EmailMessagesPanel companyId={company.id}/>
 
       {/* reply notes */}
-      <div style={{ paddingRight: 12 }}>
+      <div style={{ paddingRight: 12, paddingLeft: 42 }}>
         <InlineEdit value={vals.reply_notes} onSave={(v) => { setVals((p) => ({ ...p, reply_notes: v })); save("reply_notes", v); }} placeholder="Notes…" multiline disabled={dimmed} textStyle={{ fontSize: 12.5, lineHeight: 1.4 }}/>
       </div>
 
@@ -1234,9 +1339,9 @@ export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
                 <div style={{ textAlign: "center" }}>Bump 3</div>
                 <div style={{ textAlign: "center" }}>Close</div>
                 <div style={{ textAlign: "center" }}>Status</div>
-                <div>Contacts</div>
+                <div style={{ paddingLeft: 42 }}>Contacts</div>
                 <div style={{ textAlign: "center" }}>Msgs</div>
-                <div>Reply notes</div>
+                <div style={{ paddingLeft: 42 }}>Reply notes</div>
                 <div style={{ textAlign: "center" }}>Actions</div>
               </div>
 

@@ -22,6 +22,29 @@ const ContactSchema = z.object({
   dm_copy_used: z.string().optional().nullable(),
 });
 
+export async function bulkCreateContacts(
+  companyId: string,
+  contacts: Array<{ name: string; role?: string; email?: string; phone?: string; x_handle?: string; linkedin_url?: string }>
+) {
+  const db = createServerClient();
+  const rows = contacts
+    .filter((c) => c.name?.trim())
+    .map((c) => ({
+      company_id: companyId,
+      name: c.name.trim(),
+      role: c.role?.trim() || null,
+      email: c.email?.trim() || null,
+      phone: c.phone?.trim() || null,
+      x_handle: c.x_handle?.trim() || null,
+      linkedin_url: c.linkedin_url?.trim() || null,
+    }));
+  if (!rows.length) return { error: "No valid contacts" };
+  const { error } = await db.from("contacts").insert(rows);
+  if (error) return dbErr(error);
+  revalidatePath("/email-outreach");
+  return { success: true };
+}
+
 export async function createContact(formData: FormData) {
   const raw = Object.fromEntries(formData.entries());
   const parsed = ContactSchema.parse({

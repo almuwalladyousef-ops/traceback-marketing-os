@@ -16,7 +16,7 @@ export default async function EmailOutreachPage() {
       .from("contacts")
       .select("*")
       .in("company_id", ids)
-      .eq("archived", false)
+      .or("archived.is.null,archived.eq.false")
       .order("created_at");
     contacts = data ?? [];
   }
