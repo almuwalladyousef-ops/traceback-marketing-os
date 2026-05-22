@@ -346,11 +346,13 @@ function ContactChips({ contacts, onOpen, onAdd }: { contacts: Contact[]; onOpen
           ))}
           {extra > 0 && (
             <div style={{
-              width: 24, height: 24, borderRadius: "50%",
-              background: "var(--surface-3)", marginLeft: -6,
-              border: "2px solid var(--surface)",
+              height: 20, borderRadius: 10, marginLeft: 2,
+              padding: "0 6px",
+              background: "var(--surface-2)",
+              border: "1px solid var(--border-strong)",
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 10, fontWeight: 600, color: "var(--text-muted)",
+              letterSpacing: "0.02em",
             }}>+{extra}</div>
           )}
         </button>
