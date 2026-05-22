@@ -29,6 +29,7 @@ type Sort = "oldest" | "newest" | "az";
 
 interface Props {
   companies: CompanyWithDue[];
+  contactsByCompany: Record<string, Contact[]>;
 }
 
 const FILTERS = [
@@ -1138,7 +1139,7 @@ function parseCSV(text: string) {
 }
 
 /* ─── Main ────────────────────────────────────────────────────────────── */
-export function EmailOutreachClient({ companies }: Props) {
+export function EmailOutreachClient({ companies, contactsByCompany }: Props) {
   const [filter, setFilter] = useState<Filter>("not_started");
   const [sort, setSort] = useState<Sort>("oldest");
   const [page, setPage] = useState(0);
@@ -1370,7 +1371,7 @@ export function EmailOutreachClient({ companies }: Props) {
                   <CompanyRow
                     key={company.id}
                     company={company}
-                    contacts={[]}
+                    contacts={contactsByCompany[company.id] ?? []}
                     num={page * PAGE_SIZE + i + 1}
                     selected={selectedIds.has(company.id)}
                     onSelect={handleSelect}
