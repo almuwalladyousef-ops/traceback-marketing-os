@@ -465,11 +465,13 @@ function CompanySlideOver({
   onClose,
   startAddContact,
   onPermDelete,
+  onContactsChanged,
 }: {
   company: CompanyWithDue;
   onClose: () => void;
   startAddContact: boolean;
   onPermDelete: (id: string) => void;
+  onContactsChanged: () => void;
 }) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loadingContacts, setLoadingContacts] = useState(true);
@@ -495,6 +497,7 @@ function CompanySlideOver({
   async function reloadContacts() {
     const data = await getCompanyContacts(company.id);
     setContacts(data);
+    onContactsChanged();
   }
 
   function startEdit(ct: Contact) {
@@ -1416,6 +1419,7 @@ export function EmailOutreachClient({ companies }: Props) {
           onClose={() => setDetail(null)}
           startAddContact={detail.addContact}
           onPermDelete={(id) => { setDetail(null); setConfirmDeleteId(id); }}
+          onContactsChanged={() => getAllContactsByCompany(companies.map((c) => c.id)).then(setContactsByCompany)}
         />
       )}
 
